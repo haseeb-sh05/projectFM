@@ -116,14 +116,36 @@ int main(int argc, char* argv[])
 		
 	std::vector<real> rf_coeff, audio_coeff;
 	
-	impulseResponseLPF(rf_Fs, rf_Fc, filter_taps,rf_coeff);
-	impulseResponseLPF(If_Fs, audio_Fc, filter_taps,audio_coeff);
+	impulseResponseLPF(rf_Fs, rf_Fc, filter_taps, rf_coeff);
+	impulseResponseLPF(If_Fs, audio_Fc, filter_taps, audio_coeff);
 
-	std::vector<real> I_filter_state(filter_taps - 1,0.0);
-	std::vector<real> Q_filter_state(filter_taps - 1,0.0);
-	std::vector<real> audio_filter_state(filter_taps - 1,0.0);
-	real I_demod_state = 0.0; 
+	std::vector<real> I_filter_state(filter_taps - 1, 0.0);
+	std::vector<real> Q_filter_state(filter_taps - 1, 0.0);
+	std::vector<real> audio_filter_state(filter_taps - 1, 0.0);
+	real I_demod_state = 0.0;
 	real Q_demod_state = 0.0;
+
+	std::vector<real> pilot_coeff, stereo_coeff, stereo_lpf_coeff;
+	std::vector<real> pilot_state(filter_taps - 1, 0.0);
+	std::vector<real> stereo_bpf_state(filter_taps - 1, 0.0);
+	std::vector<real> stereo_lpf_state(filter_taps - 1, 0.0);
+	std::vector<real> pilot_filtered(If_block_size, 0.0);
+	std::vector<real> stereo_filtered(If_block_size, 0.0);
+	std::vector<real> nco_out(If_block_size, 0.0);
+	std::vector<real> mixed(If_block_size, 0.0);
+	std::vector<real> stereo_audio(audio_block_size, 0.0);
+	std::vector<real> combined_pilot(filter_taps - 1 + If_block_size, 0.0);
+	std::vector<real> combined_stereo_bpf(filter_taps - 1 + If_block_size, 0.0);
+	std::vector<real> combined_stereo_lpf(filter_taps - 1 + If_block_size, 0.0);
+	std::vector<short int> final_stereo_data(2 * audio_block_size);
+	PllState pll_state;
+
+	if (farthest_path == 's') {
+		impulseResponseBPF(If_Fs, 18.5e3, 19.5e3, filter_taps, pilot_coeff);
+		impulseResponseBPF(If_Fs, 22e3, 54e3, filter_taps, stereo_coeff);
+		impulseResponseLPF(If_Fs, audio_Fc, filter_taps, stereo_lpf_coeff);
+		for (auto &c : stereo_lpf_coeff) c *= 2.0;
+	}
 
 	int block_id = 0;
 
@@ -162,18 +184,32 @@ int main(int argc, char* argv[])
 
 		fmDemodNoArctan(block_data_If_I, block_data_If_Q, I_demod_state, Q_demod_state, fm_demod_data);
 
-		blockConvolve_Decimate(audio_data, fm_demod_data, audio_coeff, audio_filter_state,combinedaudio, audio_decim);
+		blockConvolve_Decimate(audio_data, fm_demod_data, audio_coeff, audio_filter_state, combinedaudio, audio_decim);
 
-	
-		for (unsigned int k = 0; k < audio_data.size(); k++) 
-		{
-			if (std::isnan(audio_data[k])) 
-				final_audiodata[k] = 0;
-			else 
-				final_audiodata[k] = static_cast<short int>(audio_data[k] * 16384);
+		if (farthest_path == 's') {
+			blockConvolve_Decimate(pilot_filtered, fm_demod_data, pilot_coeff, pilot_state, combined_pilot, 1);
+			pllBlock(pilot_filtered, 19e3, If_Fs, 2.0, 0.0, 0.01, pll_state, nco_out);
+			blockConvolve_Decimate(stereo_filtered, fm_demod_data, stereo_coeff, stereo_bpf_state, combined_stereo_bpf, 1);
+			for (int k = 0; k < If_block_size; k++) mixed[k] = stereo_filtered[k] * nco_out[k];
+			blockConvolve_Decimate(stereo_audio, mixed, stereo_lpf_coeff, stereo_lpf_state, combined_stereo_lpf, audio_decim);
+
+			for (int k = 0; k < audio_block_size; k++) {
+				real left  = 0.5 * (audio_data[k] + stereo_audio[k]);
+				real right = 0.5 * (audio_data[k] - stereo_audio[k]);
+				final_stereo_data[2 * k]     = std::isnan(left)  ? 0 : static_cast<short int>(left  * 16384);
+				final_stereo_data[2 * k + 1] = std::isnan(right) ? 0 : static_cast<short int>(right * 16384);
+			}
+			fwrite(&final_stereo_data[0], sizeof(short int), final_stereo_data.size(), stdout);
+
+		} else {
+			for (unsigned int k = 0; k < audio_data.size(); k++) {
+				if (std::isnan(audio_data[k]))
+					final_audiodata[k] = 0;
+				else
+					final_audiodata[k] = static_cast<short int>(audio_data[k] * 16384);
+			}
+			fwrite(&final_audiodata[0], sizeof(short int), final_audiodata.size(), stdout);
 		}
-		
-		fwrite(&final_audiodata[0], sizeof(short int), final_audiodata.size(), stdout);
 		block_id++;
 	}
 

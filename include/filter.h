@@ -16,6 +16,7 @@ Ontario, Canada
 
 // Declaration of function prototypes
 void impulseResponseLPF(real, real, unsigned short int, std::vector<real> &);
+void impulseResponseBPF(real, real, real, unsigned short int, std::vector<real> &);
 void convolveFIR(std::vector<real> &, const std::vector<real> &, const std::vector<real> &);
 
 //////////////////////////////////////////////////////////////
@@ -28,6 +29,21 @@ void convolveFIR_reference(std::vector<real> &y, const std::vector<real> &x, con
 void blockConvolve_Decimate(std::vector<real> &, const std::vector<real> &, const std::vector<real> &, std::vector<real> &, std::vector<real> &, int);
 
 void fmDemodNoArctan(const std::vector<real> &, const std::vector<real> &, real &, real &, std::vector<real> &);
+
+struct PllState {
+	real   integrator  = 0.0;
+	real   phaseEst    = 0.0;
+	real   feedbackI   = 1.0;
+	real   feedbackQ   = 0.0;
+	double trigOffset  = 0.0;
+	real   ncoOut_last = 1.0;
+};
+
+void pllBlock(const std::vector<real> &pllIn,
+              real freq, real Fs,
+              real ncoScale, real phaseAdjust, real normBandwidth,
+              PllState &state,
+              std::vector<real> &ncoOut);
 
 
 #endif // DY4_FILTER_H

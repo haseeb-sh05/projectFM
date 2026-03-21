@@ -33,10 +33,41 @@ void impulseResponseLPF(real Fs, real Fc, unsigned short int num_taps, std::vect
 		h[k] = h[k] * (0.5 - (0.5)*std::cos(2*PI*k/(num_taps - 1)));
 		scale_factor = scale_factor + h[k];
 	}
-	
+
 	for (int k = 0; k < (int)h.size(); k++){
 		h[k] = h[k]/scale_factor;
 	}
+}
+
+void impulseResponseBPF(real Fs, real Flo, real Fhi, unsigned short int num_taps, std::vector<real> &h)
+{
+	h.clear();
+	h.resize(num_taps, 0.0);
+
+	int center = (num_taps - 1) / 2;
+	real Fmid  = (Flo + Fhi) / 2.0;
+
+	for (int k = 0; k < (int)h.size(); k++) {
+		int  n = k - center;
+		real hlo, hhi;
+		if (n == 0) {
+			hlo = 2.0 * Flo / Fs;
+			hhi = 2.0 * Fhi / Fs;
+		} else {
+			hlo = std::sin(2.0 * PI * Flo * n / Fs) / (PI * n);
+			hhi = std::sin(2.0 * PI * Fhi * n / Fs) / (PI * n);
+		}
+		h[k] = (hhi - hlo) * (0.5 - 0.5 * std::cos(2.0 * PI * k / (num_taps - 1)));
+	}
+
+	real scale_factor = 0.0;
+	for (int k = 0; k < (int)h.size(); k++) {
+		int n = k - center;
+		scale_factor += h[k] * std::cos(2.0 * PI * Fmid / Fs * n);
+	}
+
+	for (int k = 0; k < (int)h.size(); k++)
+		h[k] /= scale_factor;
 }
 
 // Function to compute the filtered output "y" by doing the convolution
@@ -141,4 +172,33 @@ void fmDemodNoArctan(const std::vector<real> &I, const std::vector<real> &Q, rea
 		previous_Q = current_Q;
 	}
 
+}
+
+void pllBlock(const std::vector<real> &pllIn,
+              real freq, real Fs,
+              real ncoScale, real phaseAdjust, real normBandwidth,
+              PllState &state,
+              std::vector<real> &ncoOut)
+{
+	const real Cp = 2.666;
+	const real Ci = 3.555;
+	const real Kp = normBandwidth * Cp;
+	const real Ki = normBandwidth * normBandwidth * Ci;
+
+	ncoOut.resize(pllIn.size());
+
+	for (int k = 0; k < (int)pllIn.size(); k++) {
+		real errorI = pllIn[k] * (+state.feedbackI);
+		real errorQ = pllIn[k] * (-state.feedbackQ);
+		real errorD = std::atan2(errorQ, errorI);
+
+		state.integrator += Ki * errorD;
+		state.phaseEst   += Kp * errorD + state.integrator;
+
+		state.trigOffset += 1.0;
+		double trigArg    = 2.0 * PI * (freq / Fs) * state.trigOffset + state.phaseEst;
+		state.feedbackI   = std::cos(trigArg);
+		state.feedbackQ   = std::sin(trigArg);
+		ncoOut[k]         = std::cos(trigArg * ncoScale + phaseAdjust);
+	}
 }
