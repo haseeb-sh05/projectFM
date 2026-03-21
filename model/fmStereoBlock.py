@@ -52,9 +52,6 @@ if __name__ == "__main__":
 	state_Q_demod  = 0.0
 	state_mono_lpf = np.zeros(audio_taps - 1)
 
-	mono_delay_len   = (stereo_taps - 1) // 2
-	mono_delay_state = np.zeros(mono_delay_len)
-
 	state_pilot_bpf  = np.zeros(stereo_taps - 1)
 	state_stereo_bpf = np.zeros(stereo_taps - 1)
 	state_stereo_lpf = np.zeros(audio_taps - 1)
@@ -80,10 +77,7 @@ if __name__ == "__main__":
 
 		fm_demod, state_I_demod, state_Q_demod = fmDemodArctan(i_ds, q_ds, state_I_demod, state_Q_demod)
 
-		delayed_mono = np.concatenate([mono_delay_state, fm_demod[:-mono_delay_len]])
-		mono_delay_state = fm_demod[-mono_delay_len:].copy()
-
-		mono_filt, state_mono_lpf = signal.lfilter(audio_coeff, 1.0, delayed_mono, zi=state_mono_lpf)
+		mono_filt, state_mono_lpf = signal.lfilter(audio_coeff, 1.0, fm_demod, zi=state_mono_lpf)
 		mono_audio = mono_filt[::audio_decim]
 
 		pilot_filt, state_pilot_bpf = signal.lfilter(pilot_coeff, 1.0, fm_demod, zi=state_pilot_bpf)
