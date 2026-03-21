@@ -140,6 +140,10 @@ int main(int argc, char* argv[])
 	std::vector<short int> final_stereo_data(2 * audio_block_size);
 	PllState pll_state;
 
+	int mono_delay_len = (filter_taps - 1) / 2;
+	std::vector<real> mono_delay_state(mono_delay_len, 0.0);
+	std::vector<real> delayed_fm(If_block_size, 0.0);
+
 	if (farthest_path == 's') {
 		impulseResponseBPF(If_Fs, 18.5e3, 19.5e3, filter_taps, pilot_coeff);
 		impulseResponseBPF(If_Fs, 22e3, 54e3, filter_taps, stereo_coeff);
@@ -184,7 +188,17 @@ int main(int argc, char* argv[])
 
 		fmDemodNoArctan(block_data_If_I, block_data_If_Q, I_demod_state, Q_demod_state, fm_demod_data);
 
-		blockConvolve_Decimate(audio_data, fm_demod_data, audio_coeff, audio_filter_state, combinedaudio, audio_decim);
+		if (farthest_path == 's') {
+			for (int k = 0; k < mono_delay_len; k++)
+				delayed_fm[k] = mono_delay_state[k];
+			for (int k = 0; k < If_block_size - mono_delay_len; k++)
+				delayed_fm[k + mono_delay_len] = fm_demod_data[k];
+			for (int k = 0; k < mono_delay_len; k++)
+				mono_delay_state[k] = fm_demod_data[If_block_size - mono_delay_len + k];
+			blockConvolve_Decimate(audio_data, delayed_fm, audio_coeff, audio_filter_state, combinedaudio, audio_decim);
+		} else {
+			blockConvolve_Decimate(audio_data, fm_demod_data, audio_coeff, audio_filter_state, combinedaudio, audio_decim);
+		}
 
 		if (farthest_path == 's') {
 			blockConvolve_Decimate(pilot_filtered, fm_demod_data, pilot_coeff, pilot_state, combined_pilot, 1);
