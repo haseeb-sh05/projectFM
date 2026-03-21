@@ -30,22 +30,11 @@ if __name__ == "__main__":
 	print("Reformatted raw RF data to 64-bit double format (" + str(iq_data.size * iq_data.itemsize) + " bytes)")
 
 	rf_coeff = signal.firwin(rf_taps, rf_Fc / (rf_Fs / 2), window='hann')
-
 	audio_coeff = signal.firwin(audio_taps, audio_Fc / (If_Fs / 2), window='hann')
+	
+	pilot_coeff = signal.firwin(stereo_taps,[18.5e3 / (If_Fs / 2), 19.5e3 / (If_Fs / 2)],pass_zero=False,window='hann')
 
-	pilot_coeff = signal.firwin(
-		stereo_taps,
-		[18.5e3 / (If_Fs / 2), 19.5e3 / (If_Fs / 2)],
-		pass_zero=False,
-		window='hann'
-	)
-
-	stereo_coeff = signal.firwin(
-		stereo_taps,
-		[22e3 / (If_Fs / 2), 54e3 / (If_Fs / 2)],
-		pass_zero=False,
-		window='hann'
-	)
+	stereo_coeff = signal.firwin(stereo_taps,[22e3 / (If_Fs / 2), 54e3 / (If_Fs / 2)],pass_zero=False,window='hann')
 
 	stereo_lpf_coeff = signal.firwin(audio_taps, audio_Fc / (If_Fs / 2), window='hann') * 2.0
 
