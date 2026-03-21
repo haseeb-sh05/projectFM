@@ -202,7 +202,7 @@ int main(int argc, char* argv[])
 
 		if (farthest_path == 's') {
 			blockConvolve_Decimate(pilot_filtered, fm_demod_data, pilot_coeff, pilot_state, combined_pilot, 1);
-			pllBlock(pilot_filtered, 19e3, If_Fs, 2.0, 0.0, 0.01, pll_state, nco_out);
+			pllBlock(pilot_filtered, 19e3, If_Fs, 2.0, 0.0, 0.02, pll_state, nco_out);
 			blockConvolve_Decimate(stereo_filtered, fm_demod_data, stereo_coeff, stereo_bpf_state, combined_stereo_bpf, 1);
 			for (int k = 0; k < If_block_size; k++) mixed[k] = stereo_filtered[k] * nco_out[k];
 			blockConvolve_Decimate(stereo_audio, mixed, stereo_lpf_coeff, stereo_lpf_state, combined_stereo_lpf, audio_decim);
