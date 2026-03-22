@@ -28,6 +28,8 @@ void convolveFIR_reference(std::vector<real> &y, const std::vector<real> &x, con
 
 void blockConvolve_Decimate(std::vector<real> &, const std::vector<real> &, const std::vector<real> &, std::vector<real> &, std::vector<real> &, int);
 
+void blockConvolve_Resample(std::vector<real> &, const std::vector<real> &, const std::vector<real> &, std::vector<real> &, std::vector<real> &, int, int);
+
 void fmDemodNoArctan(const std::vector<real> &, const std::vector<real> &, real &, real &, std::vector<real> &);
 
 struct PllState {

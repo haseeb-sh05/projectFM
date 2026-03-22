@@ -132,7 +132,7 @@ void blockConvolve_Decimate(std::vector<real> &yb, const std::vector<real> &xb, 
 
         for (int k = 0; k < unrolled_limit; k+=4)
 		{
-                yb[idx] += h[k] * combined[base - k] + h[k + 1] * combined[base - (k+1)] + h[k + 2] * combined[base - (k+2)] + h[k + 3] * combined[base - (k+3)];
+            yb[idx] += h[k] * combined[base - k] + h[k + 1] * combined[base - (k+1)] + h[k + 2] * combined[base - (k+2)] + h[k + 3] * combined[base - (k+3)];
 		}
 
 		for (int k = unrolled_limit; k < M; k++)
@@ -143,6 +143,29 @@ void blockConvolve_Decimate(std::vector<real> &yb, const std::vector<real> &xb, 
 
 	
     state.assign(xb.end() - (M-1), xb.end());
+}
+
+void blockConvolve_Resample(std::vector<real> &yb, const std::vector<real> &xb, const std::vector<real> &h, std::vector<real> &state, std::vector<real> &combined, int audio_up, int audio_decim)
+{
+	int N_taps = (int)h.size() / audio_up;
+
+	for (int i = 0; i < N_taps - 1; i++)
+		combined[i] = state[i];
+	for (int i = 0; i < (int)xb.size(); i++)
+		combined[i + (N_taps - 1)] = xb[i];
+
+	for (int i = 0; i < (int)yb.size(); i++) {
+		long long n     = (long long)i * audio_decim;
+		int phase = (int)(n % audio_up);
+		int x_idx = (int)(n / audio_up);
+		int base  = x_idx + (N_taps - 1);
+
+		yb[i] = 0.0;
+		for (int k = 0; k < N_taps; k++)
+			yb[i] += h[phase + k * audio_up] * combined[base - k];
+	}
+
+	state.assign(xb.end() - (N_taps - 1), xb.end());
 }
 
 void fmDemodNoArctan(const std::vector<real> &I, const std::vector<real> &Q, real &previous_I, real &previous_Q, std::vector<real> &fm_demod)

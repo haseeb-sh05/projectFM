@@ -151,6 +151,22 @@ int main(int argc, char* argv[])
 		for (auto &c : stereo_lpf_coeff) c *= 2.0;
 	}
 
+	std::vector<real> resamp_coeff, stereo_resamp_coeff;
+	std::vector<real> resamp_state(filter_taps - 1, 0.0);
+	std::vector<real> combined_resamp(filter_taps - 1 + If_block_size, 0.0);
+	std::vector<real> stereo_resamp_state(filter_taps - 1, 0.0);
+	std::vector<real> combined_stereo_resamp(filter_taps - 1 + If_block_size, 0.0);
+
+	if (audio_up > 1) {
+		impulseResponseLPF((real)audio_up * If_Fs, audio_Fc,
+			(unsigned short int)(audio_up * filter_taps), resamp_coeff);
+		for (auto &c : resamp_coeff) c *= (real)audio_up;
+		if (farthest_path == 's') {
+			stereo_resamp_coeff = resamp_coeff;
+			for (auto &c : stereo_resamp_coeff) c *= 2.0;
+		}
+	}
+
 	int block_id = 0;
 
 	std::vector<real> block_data(block_IQ_size,0.0);
@@ -195,9 +211,15 @@ int main(int argc, char* argv[])
 				delayed_fm[k + mono_delay_len] = fm_demod_data[k];
 			for (int k = 0; k < mono_delay_len; k++)
 				mono_delay_state[k] = fm_demod_data[If_block_size - mono_delay_len + k];
-			blockConvolve_Decimate(audio_data, delayed_fm, audio_coeff, audio_filter_state, combinedaudio, audio_decim);
+			if (audio_up > 1)
+				blockConvolve_Resample(audio_data, delayed_fm, resamp_coeff, resamp_state, combined_resamp, audio_up, audio_decim);
+			else
+				blockConvolve_Decimate(audio_data, delayed_fm, audio_coeff, audio_filter_state, combinedaudio, audio_decim);
 		} else {
-			blockConvolve_Decimate(audio_data, fm_demod_data, audio_coeff, audio_filter_state, combinedaudio, audio_decim);
+			if (audio_up > 1)
+				blockConvolve_Resample(audio_data, fm_demod_data, resamp_coeff, resamp_state, combined_resamp, audio_up, audio_decim);
+			else
+				blockConvolve_Decimate(audio_data, fm_demod_data, audio_coeff, audio_filter_state, combinedaudio, audio_decim);
 		}
 
 		if (farthest_path == 's') {
@@ -205,7 +227,10 @@ int main(int argc, char* argv[])
 			pllBlock(pilot_filtered, 19e3, If_Fs, 2.0, 0.0, 0.02, pll_state, nco_out);
 			blockConvolve_Decimate(stereo_filtered, fm_demod_data, stereo_coeff, stereo_bpf_state, combined_stereo_bpf, 1);
 			for (int k = 0; k < If_block_size; k++) mixed[k] = stereo_filtered[k] * nco_out[k];
-			blockConvolve_Decimate(stereo_audio, mixed, stereo_lpf_coeff, stereo_lpf_state, combined_stereo_lpf, audio_decim);
+			if (audio_up > 1)
+				blockConvolve_Resample(stereo_audio, mixed, stereo_resamp_coeff, stereo_resamp_state, combined_stereo_resamp, audio_up, audio_decim);
+			else
+				blockConvolve_Decimate(stereo_audio, mixed, stereo_lpf_coeff, stereo_lpf_state, combined_stereo_lpf, audio_decim);
 
 			for (int k = 0; k < audio_block_size; k++) {
 				real left  = 0.5 * (audio_data[k] + stereo_audio[k]);
