@@ -11,10 +11,8 @@ Ontario, Canada
 #include <cmath>
 
 
-// Function to compute the impulse response "h" based on the sinc function
-void impulseResponseLPF(real Fs, real Fc, unsigned short int num_taps, std::vector<real> &h)
+void impulseResponseLPF(real Fs, real Fc, unsigned short int num_taps, std::vector<real> &h, real gain)
 {
-	// Allocate memory for the impulse response
 	h.clear();
 	h.resize(num_taps, 0.0);
 
@@ -25,8 +23,7 @@ void impulseResponseLPF(real Fs, real Fc, unsigned short int num_taps, std::vect
 	for (int k = 0; k < (int)h.size(); k++){
 		n = k - center;
 		if (n == 0)
-			h[k] = 2*Fc/Fs;
-		
+			h[k] = (2*Fc/Fs);
 		else
 			h[k] = (std::sin(2*PI*Fc*n/Fs))/(PI*n);
 
@@ -35,7 +32,7 @@ void impulseResponseLPF(real Fs, real Fc, unsigned short int num_taps, std::vect
 	}
 
 	for (int k = 0; k < (int)h.size(); k++){
-		h[k] = h[k]/scale_factor;
+		h[k] = (h[k]/scale_factor) * gain;
 	}
 }
 
@@ -49,12 +46,10 @@ void impulseResponseBPF(real Fs, real Flo, real Fhi, unsigned short int num_taps
 	for (int k = 0; k < (int)h.size(); k++) {
 		int  n = k - center;
 		real hlo, hhi;
-		if (n == 0) 
-		{
+		if (n == 0) {
 			hlo = 2.0 * Flo / Fs;
 			hhi = 2.0 * Fhi / Fs;
-		} else 
-		{
+		} else {
 			hlo = std::sin(2.0 * PI * Flo * n / Fs) / (PI * n);
 			hhi = std::sin(2.0 * PI * Fhi * n / Fs) / (PI * n);
 		}
@@ -71,8 +66,6 @@ void impulseResponseBPF(real Fs, real Flo, real Fhi, unsigned short int num_taps
 		h[k] /= scale_factor;
 }
 
-// Function to compute the filtered output "y" by doing the convolution
-// of the input data "x" with the impulse response "h"
 void convolveFIR(std::vector<real> &y, const std::vector<real> &x, const std::vector<real> &h)
 {
 	y.clear();
@@ -113,11 +106,10 @@ void convolveFIR_reference(std::vector<real> &y, const std::vector<real> &x, con
     }
 }
 
-void blockConvolve_Decimate(std::vector<real> &yb, const std::vector<real> &xb, const std::vector<real> &h, std::vector<real> &state, std::vector<real> &combined,  int decimation)
+void blockConvolve_DecimateFast(std::vector<real> &yb, const std::vector<real> &xb, const std::vector<real> &h, std::vector<real> &state, std::vector<real> &combined, int decimation)
 {
 	int M = h.size();
 	int unrolled_limit = M - (M % 4);
-
 
 	for (int i = 0; i < M - 1; i++)
 		combined[i] = state[i];
@@ -137,35 +129,131 @@ void blockConvolve_Decimate(std::vector<real> &yb, const std::vector<real> &xb, 
 
 		for (int k = unrolled_limit; k < M; k++)
 			yb[idx] += h[k] * combined[base - k];
-			
+
 		idx++;
 	}
 
-	
-    state.assign(xb.end() - (M-1), xb.end());
+    state.assign(combined.end() - (M-1), combined.end());
 }
 
-void blockConvolve_Resample(std::vector<real> &yb, const std::vector<real> &xb, const std::vector<real> &h, std::vector<real> &state, std::vector<real> &combined, int audio_up, int audio_decim)
+void blockConvolve_DecimateSlow(std::vector<real> &yb, const std::vector<real> &xb, const std::vector<real> &h, std::vector<real> &state, std::vector<real> &combined, int decimation)
 {
-	int N_taps = (int)h.size() / audio_up;
+	int M = h.size();
 
-	for (int i = 0; i < N_taps - 1; i++)
+	for (int i = 0; i < M - 1; i++)
 		combined[i] = state[i];
+
 	for (int i = 0; i < (int)xb.size(); i++)
-		combined[i + (N_taps - 1)] = xb[i];
+		combined[i + (M-1)] = xb[i];
 
-	for (int i = 0; i < (int)yb.size(); i++) {
-		long long n     = (long long)i * audio_decim;
-		int phase = (int)(n % audio_up);
-		int x_idx = (int)(n / audio_up);
-		int base  = x_idx + (N_taps - 1);
+	int idx = 0;
+    for (int n = 0; n < (int)xb.size(); n++){
+		int base  = n + (M-1);
+		yb[idx] = 0;
 
-		yb[i] = 0.0;
-		for (int k = 0; k < N_taps; k++)
-			yb[i] += h[phase + k * audio_up] * combined[base - k];
+        for (int k = 0; k < M; k++)
+		{
+            yb[idx] += h[k] * combined[base - k];
+		}
+
+		idx++;
 	}
 
-	state.assign(xb.end() - (N_taps - 1), xb.end());
+	for (int n = 0; n < (int)yb.size()/decimation; n++)
+	{
+		yb[n] = yb[n*decimation];
+	}
+
+	yb.resize(int(yb.size()/decimation));
+	yb.shrink_to_fit();
+    state.assign(combined.end() - (M-1), combined.end());
+}
+
+void blockConvolve_ResampleSlow(std::vector<real> &yb, const std::vector<real> &xb, const std::vector<real> &h, std::vector<real> &state, std::vector<real> &combined, int decimation, int upsampling)
+{
+	int M = h.size();
+
+	std::vector<real> xb_u((int)xb.size() * upsampling, 0.0);
+
+	int index_u = 0;
+
+	for (int i = 0; i < (int)xb.size() * upsampling; i++)
+	{
+		if (i % upsampling == 0)
+			xb_u[i] = xb[index_u++];
+		else
+			xb_u[i] = 0.0;
+	}
+
+	for (int i = 0; i < M - 1; i++)
+		combined[i] = state[i];
+
+	for (int i = 0; i < (int)xb_u.size(); i++)
+		combined[i + (M-1)] = xb_u[i];
+
+	int idx = 0;
+    for (int n = 0; n < (int)xb_u.size(); n++){
+		int base  = n + (M-1);
+		yb[idx] = 0;
+        for (int k = 0; k < M; k++)
+		{
+            yb[idx] += h[k] * combined[base - k];
+		}
+		idx++;
+	}
+
+	for (int t = 0; t < (int)(yb.size()/decimation); t++)
+	{
+		yb[t] = yb[t*decimation];
+	}
+	yb.resize(int(yb.size()/decimation));
+	yb.shrink_to_fit();
+
+    state.assign(combined.end() - (M-1), combined.end());
+}
+
+void blockConvolve_ResampleFast(std::vector<real> &yb, const std::vector<real> &xb, const std::vector<real> &h, std::vector<real> &state, std::vector<real> &combined, int decimation, int upsampling)
+{
+	int M = h.size();
+	int M_offset = M-1;
+
+	for (int i = 0; i < M_offset; i++)
+		combined[i] = state[i];
+
+	for (int i = 0; i < (int)xb.size(); i++)
+		combined[i + (M_offset)] = xb[i];
+
+	int output_size = ((int)xb.size()*upsampling)/decimation;
+	int unrolled_limit = 0;
+
+	int idx = 0;
+	int original = 0;
+	int phase = 0;
+	int start = 0;
+    for (int n = 0; n < (int)output_size; n++){
+		yb[idx] = 0;
+		phase = original % upsampling;
+		start = (original - phase)/upsampling;
+		int base  = start + (M_offset);
+		int tap_count = (M - phase) / upsampling;
+		int unrolled_taps = tap_count - (tap_count % 4);
+		unrolled_limit = phase + unrolled_taps * upsampling;
+        for (int k = phase; k < unrolled_limit; k+=(upsampling*4))
+		{
+            yb[idx] += h[k] * combined[base] +
+						h[k + 1*upsampling] * combined[base-1] +
+						h[k + 2*upsampling] * combined[base-2] +
+						h[k + 3*upsampling] * combined[base-3];
+			base -= 4;
+		}
+
+		for (int k = unrolled_limit; k < M; k+=upsampling)
+			yb[idx] += h[k] * combined[base--];
+		original += decimation;
+		idx++;
+	}
+
+    state.assign(combined.end() - (M_offset), combined.end());
 }
 
 void fmDemodNoArctan(const std::vector<real> &I, const std::vector<real> &Q, real &previous_I, real &previous_Q, std::vector<real> &fm_demod)
@@ -195,7 +283,6 @@ void fmDemodNoArctan(const std::vector<real> &I, const std::vector<real> &Q, rea
 		previous_I = current_I;
 		previous_Q = current_Q;
 	}
-
 }
 
 void pllBlock(const std::vector<real> &pllIn,

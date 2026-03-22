@@ -15,7 +15,7 @@ Ontario, Canada
 #include "dy4.h"
 
 // Declaration of function prototypes
-void impulseResponseLPF(real, real, unsigned short int, std::vector<real> &);
+void impulseResponseLPF(real, real, unsigned short int, std::vector<real> &, real gain = 1.0);
 void impulseResponseBPF(real, real, real, unsigned short int, std::vector<real> &);
 void convolveFIR(std::vector<real> &, const std::vector<real> &, const std::vector<real> &);
 
@@ -26,9 +26,11 @@ void convolveFIR(std::vector<real> &, const std::vector<real> &, const std::vect
 void convolveFIR_inefficient(std::vector<real> &y, const std::vector<real> &x, const std::vector<real> &h);
 void convolveFIR_reference(std::vector<real> &y, const std::vector<real> &x, const std::vector<real> &h);
 
-void blockConvolve_Decimate(std::vector<real> &, const std::vector<real> &, const std::vector<real> &, std::vector<real> &, std::vector<real> &, int);
+void blockConvolve_DecimateFast(std::vector<real> &, const std::vector<real> &, const std::vector<real> &, std::vector<real> &, std::vector<real> &, int);
+void blockConvolve_DecimateSlow(std::vector<real> &, const std::vector<real> &, const std::vector<real> &, std::vector<real> &, std::vector<real> &, int);
 
-void blockConvolve_Resample(std::vector<real> &, const std::vector<real> &, const std::vector<real> &, std::vector<real> &, std::vector<real> &, int, int);
+void blockConvolve_ResampleFast(std::vector<real> &, const std::vector<real> &, const std::vector<real> &, std::vector<real> &, std::vector<real> &, int, int);
+void blockConvolve_ResampleSlow(std::vector<real> &, const std::vector<real> &, const std::vector<real> &, std::vector<real> &, std::vector<real> &, int, int);
 
 void fmDemodNoArctan(const std::vector<real> &, const std::vector<real> &, real &, real &, std::vector<real> &);
 
@@ -49,4 +51,3 @@ void pllBlock(const std::vector<real> &pllIn,
 
 
 #endif // DY4_FILTER_H
-

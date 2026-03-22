@@ -109,26 +109,28 @@ int main(int argc, char* argv[])
 		audio_up = 49;
 	}
 
-	rfblocksize = rf_Fs*(block_duration_ms/1000); //num of samples in each block
+	rfblocksize = rf_Fs*(block_duration_ms/1000);
 	block_IQ_size = rfblocksize * 2;
 	If_block_size = rfblocksize / rf_decim;
 	audio_block_size = (If_block_size*audio_up)/audio_decim;
-		
+
+	int audio_M = filter_taps * audio_up;
+
 	std::vector<real> rf_coeff, audio_coeff;
-	
-	impulseResponseLPF(rf_Fs, rf_Fc, filter_taps, rf_coeff);
-	impulseResponseLPF(If_Fs, audio_Fc, filter_taps, audio_coeff);
+
+	impulseResponseLPF(rf_Fs, rf_Fc, filter_taps, rf_coeff, 1.0);
+	impulseResponseLPF(If_Fs * audio_up, audio_Fc, audio_M, audio_coeff, (real)audio_up);
 
 	std::vector<real> I_filter_state(filter_taps - 1, 0.0);
 	std::vector<real> Q_filter_state(filter_taps - 1, 0.0);
-	std::vector<real> audio_filter_state(filter_taps - 1, 0.0);
+	std::vector<real> audio_filter_state(audio_M - 1, 0.0);
 	real I_demod_state = 0.0;
 	real Q_demod_state = 0.0;
 
 	std::vector<real> pilot_coeff, stereo_coeff, stereo_lpf_coeff;
 	std::vector<real> pilot_state(filter_taps - 1, 0.0);
 	std::vector<real> stereo_bpf_state(filter_taps - 1, 0.0);
-	std::vector<real> stereo_lpf_state(filter_taps - 1, 0.0);
+	std::vector<real> stereo_lpf_state(audio_M - 1, 0.0);
 	std::vector<real> pilot_filtered(If_block_size, 0.0);
 	std::vector<real> stereo_filtered(If_block_size, 0.0);
 	std::vector<real> nco_out(If_block_size, 0.0);
@@ -136,7 +138,7 @@ int main(int argc, char* argv[])
 	std::vector<real> stereo_audio(audio_block_size, 0.0);
 	std::vector<real> combined_pilot(filter_taps - 1 + If_block_size, 0.0);
 	std::vector<real> combined_stereo_bpf(filter_taps - 1 + If_block_size, 0.0);
-	std::vector<real> combined_stereo_lpf(filter_taps - 1 + If_block_size, 0.0);
+	std::vector<real> combined_stereo_lpf(audio_M - 1 + If_block_size, 0.0);
 	std::vector<short int> final_stereo_data(2 * audio_block_size);
 	PllState pll_state;
 
@@ -147,24 +149,7 @@ int main(int argc, char* argv[])
 	if (farthest_path == 's') {
 		impulseResponseBPF(If_Fs, 18.5e3, 19.5e3, filter_taps, pilot_coeff);
 		impulseResponseBPF(If_Fs, 22e3, 54e3, filter_taps, stereo_coeff);
-		impulseResponseLPF(If_Fs, audio_Fc, filter_taps, stereo_lpf_coeff);
-		for (auto &c : stereo_lpf_coeff) c *= 2.0;
-	}
-
-	std::vector<real> resamp_coeff, stereo_resamp_coeff;
-	std::vector<real> resamp_state(filter_taps - 1, 0.0);
-	std::vector<real> combined_resamp(filter_taps - 1 + If_block_size, 0.0);
-	std::vector<real> stereo_resamp_state(filter_taps - 1, 0.0);
-	std::vector<real> combined_stereo_resamp(filter_taps - 1 + If_block_size, 0.0);
-
-	if (audio_up > 1) {
-		impulseResponseLPF((real)audio_up * If_Fs, audio_Fc,
-			(unsigned short int)(audio_up * filter_taps), resamp_coeff);
-		for (auto &c : resamp_coeff) c *= (real)audio_up;
-		if (farthest_path == 's') {
-			stereo_resamp_coeff = resamp_coeff;
-			for (auto &c : stereo_resamp_coeff) c *= 2.0;
-		}
+		impulseResponseLPF(If_Fs * audio_up, audio_Fc, audio_M, stereo_lpf_coeff, (real)audio_up * 2.0);
 	}
 
 	int block_id = 0;
@@ -179,7 +164,7 @@ int main(int argc, char* argv[])
 	std::vector<real> audio_data(audio_block_size,0.0);
 
 	std::vector<real> combinedRF(filter_taps - 1 + rfblocksize,0.0);
-	std::vector<real> combinedaudio(filter_taps - 1 + If_block_size,0.0);
+	std::vector<real> combinedaudio(audio_M - 1 + If_block_size,0.0);
 
 	std::vector<short int> final_audiodata(audio_data.size());
 
@@ -199,8 +184,8 @@ int main(int argc, char* argv[])
 
 		UnInterleave_IQ(block_data, block_data_I, block_data_Q);
 
-		blockConvolve_Decimate(block_data_If_I, block_data_I, rf_coeff, I_filter_state,combinedRF, rf_decim);
-		blockConvolve_Decimate(block_data_If_Q, block_data_Q, rf_coeff, Q_filter_state,combinedRF, rf_decim);
+		blockConvolve_DecimateFast(block_data_If_I, block_data_I, rf_coeff, I_filter_state, combinedRF, rf_decim);
+		blockConvolve_DecimateFast(block_data_If_Q, block_data_Q, rf_coeff, Q_filter_state, combinedRF, rf_decim);
 
 		fmDemodNoArctan(block_data_If_I, block_data_If_Q, I_demod_state, Q_demod_state, fm_demod_data);
 
@@ -211,26 +196,28 @@ int main(int argc, char* argv[])
 				delayed_fm[k + mono_delay_len] = fm_demod_data[k];
 			for (int k = 0; k < mono_delay_len; k++)
 				mono_delay_state[k] = fm_demod_data[If_block_size - mono_delay_len + k];
+
 			if (audio_up > 1)
-				blockConvolve_Resample(audio_data, delayed_fm, resamp_coeff, resamp_state, combined_resamp, audio_up, audio_decim);
+				blockConvolve_ResampleFast(audio_data, delayed_fm, audio_coeff, audio_filter_state, combinedaudio, audio_decim, audio_up);
 			else
-				blockConvolve_Decimate(audio_data, delayed_fm, audio_coeff, audio_filter_state, combinedaudio, audio_decim);
+				blockConvolve_DecimateFast(audio_data, delayed_fm, audio_coeff, audio_filter_state, combinedaudio, audio_decim);
 		} else {
 			if (audio_up > 1)
-				blockConvolve_Resample(audio_data, fm_demod_data, resamp_coeff, resamp_state, combined_resamp, audio_up, audio_decim);
+				blockConvolve_ResampleFast(audio_data, fm_demod_data, audio_coeff, audio_filter_state, combinedaudio, audio_decim, audio_up);
 			else
-				blockConvolve_Decimate(audio_data, fm_demod_data, audio_coeff, audio_filter_state, combinedaudio, audio_decim);
+				blockConvolve_DecimateFast(audio_data, fm_demod_data, audio_coeff, audio_filter_state, combinedaudio, audio_decim);
 		}
 
 		if (farthest_path == 's') {
-			blockConvolve_Decimate(pilot_filtered, fm_demod_data, pilot_coeff, pilot_state, combined_pilot, 1);
+			blockConvolve_DecimateFast(pilot_filtered, fm_demod_data, pilot_coeff, pilot_state, combined_pilot, 1);
 			pllBlock(pilot_filtered, 19e3, If_Fs, 2.0, 0.0, 0.02, pll_state, nco_out);
-			blockConvolve_Decimate(stereo_filtered, fm_demod_data, stereo_coeff, stereo_bpf_state, combined_stereo_bpf, 1);
+			blockConvolve_DecimateFast(stereo_filtered, fm_demod_data, stereo_coeff, stereo_bpf_state, combined_stereo_bpf, 1);
 			for (int k = 0; k < If_block_size; k++) mixed[k] = stereo_filtered[k] * nco_out[k];
+
 			if (audio_up > 1)
-				blockConvolve_Resample(stereo_audio, mixed, stereo_resamp_coeff, stereo_resamp_state, combined_stereo_resamp, audio_up, audio_decim);
+				blockConvolve_ResampleFast(stereo_audio, mixed, stereo_lpf_coeff, stereo_lpf_state, combined_stereo_lpf, audio_decim, audio_up);
 			else
-				blockConvolve_Decimate(stereo_audio, mixed, stereo_lpf_coeff, stereo_lpf_state, combined_stereo_lpf, audio_decim);
+				blockConvolve_DecimateFast(stereo_audio, mixed, stereo_lpf_coeff, stereo_lpf_state, combined_stereo_lpf, audio_decim);
 
 			for (int k = 0; k < audio_block_size; k++) {
 				real left  = 0.5 * (audio_data[k] + stereo_audio[k]);
@@ -251,102 +238,6 @@ int main(int argc, char* argv[])
 		}
 		block_id++;
 	}
-
-
-
-
-
-
-	
-
-
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	/*
-	
-	// Binary files can be generated through the
-	// Python models from the "../model/" sub-folder
-	const std::string in_fname = "../data/fm_demod_10.bin";
-	std::vector<real> bin_data;
-	readBinData(in_fname, bin_data);
-
-	// Generate an index vector to be used by logVector on the X axis
-	std::vector<real> vector_index;
-	genIndexVector(vector_index, bin_data.size());
-	// Log time data in the "../data/" subfolder in a file with the following name
-	// note: .dat suffix will be added to the log file in the logVector function
-	logVector("demod_time", vector_index, bin_data);
-
-	// Take a slice of data with a limited number of samples for the Fourier transform
-	// note: NFFT constant is actually just the number of points for the
-	// Fourier transform - there is no FFT implementation ... yet
-	// unless you wish to wait for a very long time, keep NFFT at 1024 or below
-	std::vector<real> slice_data = \
-		std::vector<real>(bin_data.begin(), bin_data.begin() + NFFT);
-	// note: make sure that binary data vector is big enough to take the slice
-
-	// Declare a vector of complex values for DFT
-	std::vector<std::complex<real>> Xf;
-	// ... In-lab ...
-	// Compute the Fourier transform
-	// the function is already provided in fourier.cpp
-
-	// Compute the magnitude of each frequency bin
-	// note: we are concerned only with the magnitude of the frequency bin
-	// (there is no logging of the phase response)
-	std::vector<real> Xmag;
-	// ... In-lab ...
-	// Compute the magnitude of each frequency bin
-	// the function is already provided in fourier.cpp
-
-	// Log the frequency magnitude vector
-	vector_index.clear();
-	genIndexVector(vector_index, Xmag.size());
-	logVector("demod_freq", vector_index, Xmag); // Log only positive freq
-
-	// For your take-home exercise - repeat the above after implementing
-	// your own function for PSD based on the Python code that has been provided
-	// note the estimate PSD function should use the entire block of "bin_data"
-	//
-	// ... Complete as part of the take-home ...
-	//
-
-	// If you wish to write some binary files, see below example
-	//
-	// const std::string out_fname = "../data/outdata.bin";
-	// writeBinData(out_fname, bin_data);
-	//
-	// output files can be imported, for example, in Python
-	// for additional analysis or alternative forms of visualization
-
-	// Naturally, you can comment the line below once you are comfortable to run GNU plot
-	std::cout << "Run: gnuplot -e 'set terminal png size 1024,768' ../data/example.gnuplot > ../data/example.png\n";
-	*/
 
 	return 0;
 }
