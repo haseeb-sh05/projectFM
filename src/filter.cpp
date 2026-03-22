@@ -43,17 +43,18 @@ void impulseResponseBPF(real Fs, real Flo, real Fhi, unsigned short int num_taps
 {
 	h.clear();
 	h.resize(num_taps, 0.0);
-
 	int center = (num_taps - 1) / 2;
 	real Fmid  = (Flo + Fhi) / 2.0;
 
 	for (int k = 0; k < (int)h.size(); k++) {
 		int  n = k - center;
 		real hlo, hhi;
-		if (n == 0) {
+		if (n == 0) 
+		{
 			hlo = 2.0 * Flo / Fs;
 			hhi = 2.0 * Fhi / Fs;
-		} else {
+		} else 
+		{
 			hlo = std::sin(2.0 * PI * Flo * n / Fs) / (PI * n);
 			hhi = std::sin(2.0 * PI * Fhi * n / Fs) / (PI * n);
 		}
