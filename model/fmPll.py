@@ -9,7 +9,7 @@
 import numpy as np
 import math
 
-def fmPll(pllIn, freq, Fs, ncoScale = 1.0, phaseAdjust = 0.0, normBandwidth = 0.01, state = None):
+def fmPll(pllIn, freq, Fs, ncoScale = 1.0, phaseAdjust = 0.0, normBandwidth = 0.01, state = None, return_quadrature = False):
 
 	"""
 
@@ -35,6 +35,10 @@ def fmPll(pllIn, freq, Fs, ncoScale = 1.0, phaseAdjust = 0.0, normBandwidth = 0.
 	state 			dictionary with keys integrator, phaseEst, feedbackI, feedbackQ,
 					trigOffset, ncoOut_last; pass None for the first block
 
+	return_quadrature  bool
+					if True, also return the quadrature (sin) NCO output in a
+					second array and include 'ncoOutQ_last' in the state dict
+
 	"""
 
 	# scale factors for proportional/integrator terms
@@ -52,6 +56,8 @@ def fmPll(pllIn, freq, Fs, ncoScale = 1.0, phaseAdjust = 0.0, normBandwidth = 0.
 
 	# output array for the NCO
 	ncoOut = np.empty(len(pllIn)+1)
+	if return_quadrature:
+		ncoOutQ = np.empty(len(pllIn)+1)
 
 	# initialize internal state
 	if state is None:
@@ -60,6 +66,8 @@ def fmPll(pllIn, freq, Fs, ncoScale = 1.0, phaseAdjust = 0.0, normBandwidth = 0.
 		feedbackI = 1.0
 		feedbackQ = 0.0
 		ncoOut[0] = 1.0
+		if return_quadrature:
+			ncoOutQ[0] = 0.0
 		trigOffset = 0
 	else:
 		integrator = state['integrator']
@@ -68,6 +76,8 @@ def fmPll(pllIn, freq, Fs, ncoScale = 1.0, phaseAdjust = 0.0, normBandwidth = 0.
 		feedbackQ  = state['feedbackQ']
 		trigOffset = state['trigOffset']
 		ncoOut[0]  = state['ncoOut_last']
+		if return_quadrature:
+			ncoOutQ[0] = state.get('ncoOutQ_last', 0.0)
 
 	# note: state saving will be needed for block processing
 	for k in range(len(pllIn)):
@@ -91,6 +101,8 @@ def fmPll(pllIn, freq, Fs, ncoScale = 1.0, phaseAdjust = 0.0, normBandwidth = 0.
 		feedbackI = math.cos(trigArg)
 		feedbackQ = math.sin(trigArg)
 		ncoOut[k+1] = math.cos(trigArg*ncoScale + phaseAdjust)
+		if return_quadrature:
+			ncoOutQ[k+1] = math.sin(trigArg*ncoScale + phaseAdjust)
 
 	# for stereo only the in-phase NCO component should be returned
 	# for block processing you should also return the state
@@ -103,10 +115,11 @@ def fmPll(pllIn, freq, Fs, ncoScale = 1.0, phaseAdjust = 0.0, normBandwidth = 0.
 		'trigOffset':  trigOffset,
 		'ncoOut_last': ncoOut[-1],
 	}
+	if return_quadrature:
+		state_out['ncoOutQ_last'] = ncoOutQ[-1]
+		return ncoOut, ncoOutQ, state_out
 
 	return ncoOut, state_out
-
-	# for RDS add also the quadrature NCO component to the output
 
 if __name__ == "__main__":
 

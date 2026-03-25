@@ -1,3 +1,5 @@
+import collections
+import sys
 import matplotlib.pyplot as plt
 from scipy import signal
 import numpy as np
@@ -53,27 +55,29 @@ def compute_syndrome(bits26):
     return syn
 
 
-rds_synced     = False
-rds_block_idx  = 0
+rds_synced = False
+rds_block_idx = 0
 rds_group_bits = [0, 0, 0, 0]
-rds_diff_prev  = 0
-rds_manch_buf  = []
-rds_bit_buf    = []
+rds_diff_prev = 0
+rds_manch_buf = []
+rds_bit_buf = collections.deque()
 rds_group_type = -1
-rds_version    = -1
-ps_chars       = ['?'] * 8
-rt_chars       = ['?'] * 64
+rds_version = -1
+ps_chars = ['?'] * 8
+rt_chars = ['\x00'] * 64   
+rds_blocks_this_call = 0
 
 
 def process_rds_block(info16, block_idx):
-    global rds_group_type, rds_version
+    global rds_group_type, rds_version, rds_blocks_this_call
+    rds_blocks_this_call += 1
     rds_group_bits[block_idx] = info16
     if block_idx == 0:
         print(f"  PI: 0x{info16:04X}")
     elif block_idx == 1:
         rds_group_type = (info16 >> 12) & 0x0F
-        rds_version    = (info16 >> 11) & 0x01
-        pty            = (info16 >> 5)  & 0x1F
+        rds_version = (info16 >> 11) & 0x01
+        pty = (info16 >> 5)  & 0x1F
         ver_str = 'A' if rds_version == 0 else 'B'
         print(f"  Group {rds_group_type}{ver_str}, PTY={pty}")
     elif block_idx == 2:
@@ -90,7 +94,7 @@ def process_rds_block(info16, block_idx):
             c0, c1 = (info16 >> 8) & 0xFF, info16 & 0xFF
             ps_chars[2 * seg]     = chr(c0) if 32 <= c0 < 128 else '?'
             ps_chars[2 * seg + 1] = chr(c1) if 32 <= c1 < 128 else '?'
-            print(f"  PS seg {seg}: '{chr(c0)}{chr(c1)}'  → '{''.join(ps_chars)}'")
+            print(f"  PS seg {seg}: '{chr(c0) if 32<=c0<128 else '?'}{chr(c1) if 32<=c1<128 else '?'}'  -> '{''.join(ps_chars)}'")
         elif rds_group_type == 2 and rds_version == 0:
             seg  = rds_group_bits[1] & 0x0F
             base = 4 * seg + 2
@@ -98,14 +102,26 @@ def process_rds_block(info16, block_idx):
                 c0, c1 = (info16 >> 8) & 0xFF, info16 & 0xFF
                 rt_chars[base]     = chr(c0) if 32 <= c0 < 128 else '?'
                 rt_chars[base + 1] = chr(c1) if 32 <= c1 < 128 else '?'
-            print(f"  RT seg {seg}: '{''.join(rt_chars).rstrip(chr(0)).strip('?')}'")
+            rt_so_far = ''.join(c if c != '\x00' else '?' for c in rt_chars).rstrip('? ').strip()
+            print(f"  RT seg {seg}: '{rt_so_far}'")
+
+
+def _try_1bit_correct(bits26, expected_syn):
+    error_syn = compute_syndrome(bits26) ^ expected_syn
+    if error_syn == 0:
+        return None
+    for i, h in enumerate(H_matrix):
+        if h == error_syn:
+            corrected = list(bits26)
+            corrected[i] ^= 1
+            return corrected
+    return None
 
 
 def rds_decode(symbols):
     global rds_synced, rds_block_idx, rds_diff_prev, rds_manch_buf, rds_bit_buf
 
     all_sym = rds_manch_buf + list(symbols)
-
     bits_diff = []
     i = 0
     while i + 1 < len(all_sym):
@@ -130,45 +146,61 @@ def rds_decode(symbols):
 
     rds_bit_buf.extend(bits)
 
-    if not rds_synced:
-        while len(rds_bit_buf) >= 26:
-            syn = compute_syndrome(rds_bit_buf[:26])
-            if syn in SYNDROME:
-                info16 = 0
-                for bit in rds_bit_buf[:16]:
-                    info16 = (info16 << 1) | bit
-                blk = SYNDROME[syn]
-                process_rds_block(info16, blk)
-                if blk == 0:
-                    rds_synced = True
+    while True:
+        if not rds_synced:
+            if len(rds_bit_buf) < 52:
+                break
+            bits_a = [rds_bit_buf[k] for k in range(26)]
+            syn_a = compute_syndrome(bits_a)
+            if syn_a == SYNDROME_SEQ[0]:                        
+                bits_b = [rds_bit_buf[26 + k] for k in range(26)]
+                if compute_syndrome(bits_b) == SYNDROME_SEQ[1]:  
+                    info16 = 0
+                    for bit in bits_a[:16]:
+                        info16 = (info16 << 1) | bit
+                    process_rds_block(info16, 0)
+                    rds_synced    = True
                     rds_block_idx = 1
-                    del rds_bit_buf[:26]
-                    break
-                else:
-                    rds_bit_buf.pop(0)
-            else:
-                rds_bit_buf.pop(0)
-    else:
-        while len(rds_bit_buf) >= 26:
-            syn = compute_syndrome(rds_bit_buf[:26])
+                    for _ in range(26):
+                        rds_bit_buf.popleft()
+                    continue   
+            rds_bit_buf.popleft()
+        else:
+            if len(rds_bit_buf) < 26:
+                break
+            bits26 = [rds_bit_buf[k] for k in range(26)]
+            syn = compute_syndrome(bits26)
             expected = SYNDROME_SEQ[rds_block_idx]
-            valid = (syn == expected) or (rds_block_idx == 2 and syn in (0b1001011100, 0b1111001100))
+            valid = (syn == expected) or (
+                rds_block_idx == 2 and syn == 0b1111001100)
+
             if valid:
+                use_bits = bits26
+            else:
+                if rds_block_idx == 2:
+                    use_bits = (_try_1bit_correct(bits26, SYNDROME_SEQ[2]) or
+                                _try_1bit_correct(bits26, 0b1111001100))
+                else:
+                    use_bits = _try_1bit_correct(bits26, expected)
+
+            if use_bits is not None:
                 info16 = 0
-                for bit in rds_bit_buf[:16]:
+                for bit in use_bits[:16]:
                     info16 = (info16 << 1) | bit
                 process_rds_block(info16, rds_block_idx)
                 rds_block_idx = (rds_block_idx + 1) % 4
-                del rds_bit_buf[:26]
+                for _ in range(26):
+                    rds_bit_buf.popleft()
             else:
                 rds_synced = False
-                rds_bit_buf.pop(0)
-                break
+                rds_bit_buf.popleft()
 
 
 if __name__ == "__main__":
 
-    in_fname = "../data/iq_samples.raw"
+    sys.stdout.reconfigure(line_buffering=True)
+
+    in_fname = r"C:\Users\hasee\Downloads\samples3.raw"
     raw_data = np.fromfile(in_fname, dtype='uint8')
     print(f"Read {len(raw_data)} bytes from \"{in_fname}\"")
     iq_data = (np.float64(raw_data) - 128.0) / 128.0
@@ -176,26 +208,18 @@ if __name__ == "__main__":
     rf_coeff = signal.firwin(rf_taps, rf_Fc / (rf_Fs / 2), window='hann')
 
     rds_bpf_lo, rds_bpf_hi = 54e3, 60e3
-    rds_bpf_coeff = signal.firwin(
-        rds_taps,
-        [rds_bpf_lo / (If_Fs / 2), rds_bpf_hi / (If_Fs / 2)],
-        pass_zero=False, window='hann')
-    print(f"RDS BPF: {rds_bpf_lo/1e3:.1f}–{rds_bpf_hi/1e3:.1f} kHz  "
-          f"(bandwidth={rds_bpf_hi-rds_bpf_lo:.0f} Hz, "
-          f"signal occupies ≈{rds_sym_rate*(1+0.90)/1e3:.2f} kHz per sideband)")
+    rds_bpf_coeff = signal.firwin(rds_taps,[rds_bpf_lo / (If_Fs / 2), rds_bpf_hi / (If_Fs / 2)], pass_zero=False, window='hann')
+
+    print(f"RDS BPF: {rds_bpf_lo/1e3:.1f}-{rds_bpf_hi/1e3:.1f} kHz  "f"(bandwidth={rds_bpf_hi-rds_bpf_lo:.0f} Hz, "f"signal occupies ~{rds_sym_rate*(1+0.90)/1e3:.2f} kHz per sideband)")
 
     rds_114_lo, rds_114_hi = 113.5e3, 114.5e3
-    rds_114_coeff = signal.firwin(
-        rds_taps,
-        [rds_114_lo / (If_Fs / 2), rds_114_hi / (If_Fs / 2)],
-        pass_zero=False, window='hann')
-    print(f"114 kHz BPF: {rds_114_lo/1e3:.1f}–{rds_114_hi/1e3:.1f} kHz  "
+    rds_114_coeff = signal.firwin(rds_taps, [rds_114_lo / (If_Fs / 2), rds_114_hi / (If_Fs / 2)], pass_zero=False, window='hann')
+
+    print(f"114 kHz BPF: {rds_114_lo/1e3:.1f}-{rds_114_hi/1e3:.1f} kHz  "
           f"(bandwidth={rds_114_hi-rds_114_lo:.0f} Hz)")
 
     rds_M = rds_taps * rds_U
-    rds_resamp_coeff = (signal.firwin(rds_M, 3e3 / (If_Fs * rds_U / 2), window='hann')
-                        * rds_U)
-
+    rds_resamp_coeff = (signal.firwin(rds_M, 3e3 / (If_Fs * rds_U / 2), window='hann') * rds_U)
     rrc_coeff = impulseResponseRootRaisedCosine(rds_out_Fs, rrc_taps)
 
     block_size  = int(rf_Fs * 0.04) * 2
@@ -220,6 +244,7 @@ if __name__ == "__main__":
     rds_bpf_out_last = np.zeros(1024)
 
     print("Starting block processing...")
+
     while (block_count + 1) * block_size < len(iq_data):
 
         iq_block = iq_data[block_count * block_size:(block_count + 1) * block_size]
@@ -229,29 +254,13 @@ if __name__ == "__main__":
         i_ds = i_filt[::rf_decim]
         q_ds = q_filt[::rf_decim]
 
-        fm_demod, state_I_demod, state_Q_demod = fmDemodArctan(
-            i_ds, q_ds, state_I_demod, state_Q_demod)
-
-        rds_bpf_out, state_rds_bpf = signal.lfilter(
-            rds_bpf_coeff, 1.0, fm_demod, zi=state_rds_bpf)
-
+        fm_demod, state_I_demod, state_Q_demod = fmDemodArctan(i_ds, q_ds, state_I_demod, state_Q_demod)
+        rds_bpf_out, state_rds_bpf = signal.lfilter(rds_bpf_coeff, 1.0, fm_demod, zi=state_rds_bpf)
         rds_squared = rds_bpf_out ** 2
+        rds_114_out, state_rds_114 = signal.lfilter(rds_114_coeff, 1.0, rds_squared, zi=state_rds_114)
 
-        rds_114_out, state_rds_114 = signal.lfilter(
-            rds_114_coeff, 1.0, rds_squared, zi=state_rds_114)
-
-        pll_state_copy = {k: v for k, v in pll_state_rds.items()} if pll_state_rds else None
-
-        nco_full_I, pll_state_rds = fmPll(
-            rds_114_out, freq=114e3, Fs=If_Fs,
-            ncoScale=0.5, phaseAdjust=0.0, normBandwidth=0.01,
-            state=pll_state_rds)
+        nco_full_I, nco_full_Q, pll_state_rds = fmPll(rds_114_out, freq=114e3, Fs=If_Fs,ncoScale=0.5, phaseAdjust=0.0, normBandwidth=0.002, state=pll_state_rds, return_quadrature=True)
         nco_I = nco_full_I[1:]
-
-        nco_full_Q, _ = fmPll(
-            rds_114_out, freq=114e3, Fs=If_Fs,
-            ncoScale=0.5, phaseAdjust=-math.pi / 2, normBandwidth=0.01,
-            state=pll_state_copy)
         nco_Q = nco_full_Q[1:]
 
         if allpass_len > 0:
@@ -266,10 +275,9 @@ if __name__ == "__main__":
         all_mixed_I.extend(mixed_I)
         all_mixed_Q.extend(mixed_Q)
 
-        if block_count % 50 == 0:
-            fm_demod_last    = fm_demod.copy()
-            rds_bpf_out_last = rds_bpf_out.copy()
-            print(f"  Processed {block_count} blocks")
+        fm_demod_last    = fm_demod.copy()
+        rds_bpf_out_last = rds_bpf_out.copy()
+        print(f"  Block {block_count:3d} processed")
 
         block_count += 1
 
@@ -329,26 +337,25 @@ if __name__ == "__main__":
           f"({len(symbols)} symbols extracted)")
 
     print("\n=== RDS Decoded Data ===")
+    rds_blocks_this_call = 0
     rds_decode(list(symbols))
-    print(f"\nFinal PS name : '{''.join(ps_chars)}'")
-    rt_text = ''.join(rt_chars).rstrip('?')
-    print(f"Final Radio Text: '{rt_text}'")
+    print(f"\nFinal PS name    : '{''.join(ps_chars)}'")
+    rt_text = ''.join(c if c != '\x00' else '?' for c in rt_chars).rstrip('? ').strip()
+    print(f"Final Radio Text : '{rt_text}'")
 
     fig, axes = plt.subplots(2, 2, figsize=(13, 9))
-    fig.suptitle("RDS Demodulation — Mode 0 (Group 70, SPS=42)")
+    fig.suptitle("RDS Demodulation - Mode 0 (Group 70, SPS=42)")
 
-    fmPlotPSD(axes[0, 0], fm_demod_last, If_Fs / 1e3, 1.0,
-              "FM Demod spectrum")
+    fmPlotPSD(axes[0, 0], fm_demod_last, If_Fs / 1e3, 1.0, "FM Demod spectrum")
 
-    fmPlotPSD(axes[0, 1], rds_bpf_out_last, If_Fs / 1e3, 1.0,
-              "RDS BPF output (54–60 kHz)")
+    fmPlotPSD(axes[0, 1], rds_bpf_out_last, If_Fs / 1e3, 1.0, "RDS BPF output (54-60 kHz)")
 
     axes[1, 0].scatter(plot_horiz[:800], plot_vert[:800], s=2, alpha=0.4)
     axes[1, 0].axhline(0, color='gray', linewidth=0.5)
     axes[1, 0].axvline(0, color='gray', linewidth=0.5)
     axes[1, 0].set_xlabel(f"Signal ({decision_axis}-axis)")
     axes[1, 0].set_ylabel(f"Orthogonal ({'Q' if decision_axis == 'I' else 'I'}-axis)")
-    axes[1, 0].set_title(f"RDS Constellation — CDR offset={cdr_offset}, axis={decision_axis}")
+    axes[1, 0].set_title(f"RDS Constellation - CDR offset={cdr_offset}, axis={decision_axis}")
     axes[1, 0].set_xlim([-2.5, 2.5])
     axes[1, 0].set_ylim([-2.5, 2.5])
     axes[1, 0].grid(True, alpha=0.4)
@@ -358,16 +365,16 @@ if __name__ == "__main__":
     t_ms   = np.arange(n_show) / rds_out_Fs * 1e3
     axes[1, 1].plot(t_ms, signal_component[:n_show], linewidth=0.8)
     visible_idx = cdr_indices[cdr_indices < n_show]
-    axes[1, 1].scatter(visible_idx / rds_out_Fs * 1e3,
-                       signal_component[visible_idx],
-                       color='red', s=20, zorder=5, label=f'CDR samples (offset={cdr_offset})')
+    axes[1, 1].scatter(visible_idx / rds_out_Fs * 1e3, signal_component[visible_idx], color='red', s=20, zorder=5, label=f'CDR samples (offset={cdr_offset})')
     axes[1, 1].set_xlabel("Time (ms)")
     axes[1, 1].set_ylabel("Amplitude (normalized)")
-    axes[1, 1].set_title(f"RRC {decision_axis}-axis — first 30 symbols (SPS={rds_SPS})")
+    axes[1, 1].set_title(f"RRC {decision_axis}-axis - first 30 symbols (SPS={rds_SPS})")
     axes[1, 1].legend(fontsize=8)
     axes[1, 1].grid(True, alpha=0.4)
 
     plt.tight_layout()
+
     plt.savefig("../data/fmRdsBlock.png")
     print("\nPlot saved to ../data/fmRdsBlock.png")
-    plt.show()
+
+    plt.show()  
