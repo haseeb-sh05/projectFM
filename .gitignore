@@ -39,4 +39,5 @@
 
 # Write explicitly the audio/image files as an exception
 
-# do NOT commit and push large binary files used for debugging
+# Raw IQ sample files
+!data/samples3.raw

@@ -200,7 +200,7 @@ if __name__ == "__main__":
 
     sys.stdout.reconfigure(line_buffering=True)
 
-    in_fname = r"C:\Users\hasee\Downloads\samples3.raw"
+    in_fname = "../data/samples3.raw"
     raw_data = np.fromfile(in_fname, dtype='uint8')
     print(f"Read {len(raw_data)} bytes from \"{in_fname}\"")
     iq_data = (np.float64(raw_data) - 128.0) / 128.0
