@@ -281,7 +281,7 @@ static void rdsDecode(const std::vector<real> &syms, RDSDecState &d) {
     while (i + 1 < (int)all.size()) {
         if      (all[i] > 0 && all[i+1] < 0) { diff.push_back(1); i += 2; }
         else if (all[i] < 0 && all[i+1] > 0) { diff.push_back(0); i += 2; }
-        else i++;
+        else { diff.push_back(all[i] > 0 ? 1 : 0); i += 2; }
     }
     d.manchBuf.clear();
     if (i < (int)all.size()) d.manchBuf.push_back(all.back());
