@@ -22,10 +22,6 @@ Ontario, Canada
 #include <numeric>
 #include <cstring>
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Thread support: full locking queue on POSIX/Linux, simple sequential queue
-// on MinGW Win32 (which lacks std::thread / std::mutex in the Win32 model).
-// ─────────────────────────────────────────────────────────────────────────────
 #ifdef _GLIBCXX_HAS_GTHREADS
 #  include <thread>
 #  include <mutex>
@@ -36,7 +32,6 @@ Ontario, Canada
 #endif
 
 #if HAS_STD_THREAD
-// Fully thread-safe bounded queue used when std::thread is available
 template<typename T>
 class BoundedQueue {
 public:
@@ -72,7 +67,6 @@ private:
 };
 
 #else
-// Simple non-blocking queue for sequential (single-threaded) fallback
 template<typename T>
 class BoundedQueue {
 public:
@@ -89,16 +83,13 @@ private:
 };
 #endif
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Mode parameters (set once in main, read-only in threads)
-// ─────────────────────────────────────────────────────────────────────────────
 struct ModeParams {
     real rf_Fs, If_Fs, audio_Fs;
     real block_ms;
     int  rf_decim;
     int  audio_decim, audio_up;
     int  filter_taps;
-    char path;                 // 'm', 's', 'r'
+    char path;
 
     int  rfblocksize;
     int  block_IQ_size;
@@ -106,15 +97,11 @@ struct ModeParams {
     int  audio_block_size;
     int  audio_M;
 
-    // RDS (modes 0 and 2 only)
     int  rds_U, rds_D, rds_SPS, rds_M;
     real rds_out_Fs;
     int  rds_block_size;
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RDS frame-sync constants (H matrix and offset syndromes)
-// ─────────────────────────────────────────────────────────────────────────────
 static const uint32_t RDS_H[26] = {
     0b1000000000u, 0b0100000000u, 0b0010000000u, 0b0001000000u,
     0b0000100000u, 0b0000010000u, 0b0000001000u, 0b0000000100u,
@@ -127,15 +114,12 @@ static const uint32_t RDS_H[26] = {
 static const uint32_t RDS_SYN[4] = {
     0b1111011000u, 0b1111010100u, 0b1001011100u, 0b1001011000u
 };
-static const uint32_t RDS_SYN_CP = 0b1111001100u;  // offset C'
+static const uint32_t RDS_SYN_CP = 0b1111001100u;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RDS decode state
-// ─────────────────────────────────────────────────────────────────────────────
 struct RDSDecState {
     bool     synced       = false;
     int      blockIdx     = 0;
-    int      sync_bad_cnt = 0;  // consecutive bad blocks while synced
+    int      sync_bad_cnt = 0;
     int      gBits[4] = {0, 0, 0, 0};
     int      diffPrev = 0;
     std::vector<real>    manchBuf;
@@ -152,7 +136,6 @@ struct RDSDecState {
     }
 };
 
-// ─── syndrome of first 26 bits in a deque ────────────────────────────────────
 static uint32_t rdsSyn(const std::deque<uint8_t> &buf, int offset = 0) {
     uint32_t s = 0;
     for (int i = 0; i < 26; i++) if (buf[offset + i]) s ^= RDS_H[i];
@@ -165,7 +148,6 @@ static uint32_t rdsSynV(const std::vector<int> &v) {
     return s;
 }
 
-// ─── attempt single-bit correction ───────────────────────────────────────────
 static bool rds1Fix(std::vector<int> &b, uint32_t expSyn) {
     uint32_t err = rdsSynV(b) ^ expSyn;
     if (!err) return false;
@@ -173,7 +155,6 @@ static bool rds1Fix(std::vector<int> &b, uint32_t expSyn) {
     return false;
 }
 
-// ─── build display string from rt[] (trim trailing null/'?'/space) ───────────
 static std::string rdsRTStr(const char rt[64]) {
     std::string s;
     for (int i = 0; i < 64; i++) s += (rt[i] ? rt[i] : '?');
@@ -182,47 +163,21 @@ static std::string rdsRTStr(const char rt[64]) {
     return s.substr(0, e);
 }
 
-// ─── RBDS (North America) Program Type name lookup (Table F.1) ───────────────
 static const char* rdsPtyName(int pty) {
     static const char* names[32] = {
-        "None",           // 0
-        "News",           // 1
-        "Information",    // 2
-        "Sports",         // 3
-        "Talk",           // 4
-        "Rock",           // 5
-        "Classic Rock",   // 6
-        "Adult Hits",     // 7
-        "Soft Rock",      // 8
-        "Top 40",         // 9
-        "Country",        // 10
-        "Oldies",         // 11
-        "Soft",           // 12
-        "Nostalgia",      // 13
-        "Jazz",           // 14
-        "Classical",      // 15
-        "Rhythm and Blues", // 16
-        "Soft R&B",       // 17
-        "Foreign Language", // 18
-        "Religious Music",  // 19
-        "Religious Talk",   // 20
-        "Personality",    // 21
-        "Public",         // 22
-        "College",        // 23
-        "Unassigned",     // 24
-        "Unassigned",     // 25
-        "Unassigned",     // 26
-        "Unassigned",     // 27
-        "Unassigned",     // 28
-        "Weather",        // 29
-        "Emergency Test", // 30
-        "Emergency",      // 31
+        "None", "News", "Information", "Sports",
+        "Talk", "Rock", "Classic Rock", "Adult Hits",
+        "Soft Rock", "Top 40", "Country", "Oldies",
+        "Soft", "Nostalgia", "Jazz", "Classical",
+        "Rhythm and Blues", "Soft R&B", "Foreign Language", "Religious Music",
+        "Religious Talk", "Personality", "Public", "College",
+        "Unassigned", "Unassigned", "Unassigned", "Unassigned",
+        "Unassigned", "Weather", "Emergency Test", "Emergency",
     };
     if (pty < 0 || pty > 31) return "Unknown";
     return names[pty];
 }
 
-// ─── process one decoded RDS block ───────────────────────────────────────────
 static void rdsBlock(uint16_t info, int bidx, RDSDecState &d) {
     d.gBits[bidx] = info;
     if (bidx == 0) {
@@ -243,7 +198,7 @@ static void rdsBlock(uint16_t info, int bidx, RDSDecState &d) {
                 d.rt[base+1] = (c1 >= 32 && c1 < 128) ? (char)c1 : '?';
             }
         }
-    } else {  // bidx == 3
+    } else {
         if (d.groupType == 0 && d.gVer == 0) {
             int seg = d.gBits[1] & 0x3;
             int c0  = (info >> 8) & 0xFF, c1 = info & 0xFF;
@@ -267,11 +222,7 @@ static void rdsBlock(uint16_t info, int bidx, RDSDecState &d) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RDS full decoder: Manchester + differential + frame sync → application layer
-// ─────────────────────────────────────────────────────────────────────────────
 static void rdsDecode(const std::vector<real> &syms, RDSDecState &d) {
-    // ── Manchester decode ───────────────────────────────────────────────────
     std::vector<real> all;
     all.insert(all.end(), d.manchBuf.begin(), d.manchBuf.end());
     all.insert(all.end(), syms.begin(), syms.end());
@@ -286,19 +237,15 @@ static void rdsDecode(const std::vector<real> &syms, RDSDecState &d) {
     d.manchBuf.clear();
     if (i < (int)all.size()) d.manchBuf.push_back(all.back());
 
-    // ── Differential decode ─────────────────────────────────────────────────
     for (int b : diff) {
         d.bitBuf.push_back((uint8_t)(b ^ d.diffPrev));
         d.diffPrev = b;
     }
 
-    // ── Frame sync state machine ────────────────────────────────────────────
     while (true) {
         if (!d.synced) {
             if ((int)d.bitBuf.size() < 52) break;
 
-            // Try all 4 block offsets as sync anchor (not just block A).
-            // This lets us lock 4× faster after a signal fade recovery.
             bool acquired = false;
             for (int bidx = 0; bidx < 4 && !acquired; bidx++) {
                 uint32_t syn0 = rdsSyn(d.bitBuf, 0);
@@ -332,7 +279,6 @@ static void rdsDecode(const std::vector<real> &syms, RDSDecState &d) {
             bool ok = (syn == expected) || (d.blockIdx == 2 && syn == RDS_SYN_CP);
 
             if (!ok) {
-                // Try single-bit correction
                 std::vector<int> try1 = b26;
                 if (d.blockIdx == 2) {
                     if (rds1Fix(try1, RDS_SYN[2])) {
@@ -356,12 +302,10 @@ static void rdsDecode(const std::vector<real> &syms, RDSDecState &d) {
             } else {
                 d.sync_bad_cnt++;
                 if (d.sync_bad_cnt >= 8) {
-                    // Too many consecutive errors — lose sync and search from next bit
                     d.synced       = false;
                     d.sync_bad_cnt = 0;
                     d.bitBuf.pop_front();
                 } else {
-                    // Treat as erasure: stay synced, advance one block boundary
                     for (int k = 0; k < 26; k++) d.bitBuf.pop_front();
                     d.blockIdx = (d.blockIdx + 1) % 4;
                 }
@@ -370,10 +314,6 @@ static void rdsDecode(const std::vector<real> &syms, RDSDecState &d) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CDR: phase-coherent sampling across blocks
-// Returns hard-decision symbols; updates 'phase' for next block.
-// ─────────────────────────────────────────────────────────────────────────────
 static std::vector<real> cdrSample(const std::vector<real> &sig, int SPS, int &phase) {
     std::vector<real> out;
     for (int k = phase; k < (int)sig.size(); k += SPS)
@@ -385,10 +325,6 @@ static std::vector<real> cdrSample(const std::vector<real> &sig, int SPS, int &p
     return out;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RF front-end thread
-// Reads stdin IQ, applies RF LPF + FM demod, pushes FM blocks to queues.
-// ─────────────────────────────────────────────────────────────────────────────
 static void rfThread(const ModeParams &p,
                      BoundedQueue<std::vector<real>> &audioQ,
                      BoundedQueue<std::vector<real>> *rdsQ)
@@ -430,9 +366,6 @@ static void rfThread(const ModeParams &p,
     if (rdsQ) rdsQ->finish();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Audio thread (mono or stereo)
-// ─────────────────────────────────────────────────────────────────────────────
 static void audioThread(const ModeParams &p,
                         BoundedQueue<std::vector<real>> &audioQ)
 {
@@ -476,7 +409,6 @@ static void audioThread(const ModeParams &p,
     std::vector<real> fm;
     while (audioQ.pop(fm)) {
         if (do_stereo) {
-            // Mono path with allpass delay for stereo alignment
             for (int k = 0; k < mono_delay_len; k++)
                 delayed_fm[k] = mono_delay_state[k];
             for (int k = 0; k < p.If_block_size - mono_delay_len; k++)
@@ -491,7 +423,6 @@ static void audioThread(const ModeParams &p,
                 blockConvolve_DecimateFast(audio_data, delayed_fm, audio_coeff,
                                            audio_state, combAudio, p.audio_decim);
 
-            // Stereo path
             blockConvolve_DecimateFast(pilot_filt, fm, pilot_coeff,
                                        pilot_state, combPilot, 1);
             pllBlock(pilot_filt, 19e3, p.If_Fs, 2.0, 0.0, 0.02,
@@ -533,22 +464,15 @@ static void audioThread(const ModeParams &p,
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RDS thread
-// Full pipeline: BPF → sq → 114kHz BPF → PLL → allpass → mix →
-//                resample → RRC → CDR (warm-up) → Manchester/diff/frame sync
-// ─────────────────────────────────────────────────────────────────────────────
 static void rdsThread(const ModeParams &p,
                       BoundedQueue<std::vector<real>> &rdsQ)
 {
-    // ── Filter design ───────────────────────────────────────────────────────
     std::vector<real> bpf_coeff, bpf114_coeff, resamp_coeff, rrc_coeff;
     impulseResponseBPF(p.If_Fs, 54e3,    60e3,   p.filter_taps, bpf_coeff);
     impulseResponseBPF(p.If_Fs, 113.5e3, 114.5e3, p.filter_taps, bpf114_coeff);
     impulseResponseLPF(p.If_Fs * p.rds_U, 3e3, p.rds_M, resamp_coeff, (real)p.rds_U);
     impulseResponseRRC(p.rds_out_Fs, p.filter_taps, rrc_coeff);
 
-    // ── Filter states ───────────────────────────────────────────────────────
     std::vector<real> bpf_state(p.filter_taps - 1, 0.0);
     std::vector<real> bpf114_state(p.filter_taps - 1, 0.0);
     std::vector<real> resI_state(p.rds_M - 1, 0.0);
@@ -556,7 +480,6 @@ static void rdsThread(const ModeParams &p,
     std::vector<real> rrcI_state(p.filter_taps - 1, 0.0);
     std::vector<real> rrcQ_state(p.filter_taps - 1, 0.0);
 
-    // ── Combined (overlap-save) buffers ─────────────────────────────────────
     std::vector<real> combBPF(p.filter_taps - 1 + p.If_block_size, 0.0);
     std::vector<real> comb114(p.filter_taps - 1 + p.If_block_size, 0.0);
     std::vector<real> combResI(p.rds_M - 1 + p.If_block_size, 0.0);
@@ -564,7 +487,6 @@ static void rdsThread(const ModeParams &p,
     std::vector<real> combRrcI(p.filter_taps - 1 + p.rds_block_size, 0.0);
     std::vector<real> combRrcQ(p.filter_taps - 1 + p.rds_block_size, 0.0);
 
-    // ── Working buffers ─────────────────────────────────────────────────────
     std::vector<real> bpf_out(p.If_block_size);
     std::vector<real> sq(p.If_block_size);
     std::vector<real> bpf114_out(p.If_block_size);
@@ -574,15 +496,11 @@ static void rdsThread(const ModeParams &p,
     std::vector<real> res_I(p.rds_block_size), res_Q(p.rds_block_size);
     std::vector<real> rrc_I(p.rds_block_size), rrc_Q(p.rds_block_size);
 
-    // ── Allpass delay (matches 114kHz BPF group delay = (N-1)/2 samples) ───
     int allpass_len = (p.filter_taps - 1) / 2;
     std::vector<real> allpass_state(allpass_len, 0.0);
 
-    // ── PLL state ───────────────────────────────────────────────────────────
     PllState pll_state;
 
-    // ── CDR warm-up state ───────────────────────────────────────────────────
-    // 50 blocks ≈ 2 s — enough data for reliable CDR statistics
     const int WARMUP_BLOCKS = 50;
     std::vector<real> wu_I, wu_Q;
     int  cdr_offset  = p.rds_SPS / 2;
@@ -597,20 +515,15 @@ static void rdsThread(const ModeParams &p,
     std::vector<real> fm;
     while (rdsQ.pop(fm)) {
 
-        // 1. RDS BPF 54-60 kHz (decimation = 1)
         blockConvolve_DecimateFast(bpf_out, fm, bpf_coeff, bpf_state, combBPF, 1);
 
-        // 2. Squaring non-linearity (carrier recovery)
         for (int k = 0; k < p.If_block_size; k++) sq[k] = bpf_out[k] * bpf_out[k];
 
-        // 3. 114 kHz BPF (decimation = 1)
         blockConvolve_DecimateFast(bpf114_out, sq, bpf114_coeff, bpf114_state, comb114, 1);
 
-        // 4. PLL/NCO → 57 kHz I and Q
         pllBlockIQ(bpf114_out, 114e3, p.If_Fs, 0.5, 0.0, 0.002,
                    pll_state, nco_I, nco_Q);
 
-        // 5. Allpass delay on BPF output to match 114kHz BPF group delay
         for (int k = 0; k < allpass_len; k++)
             bpf_delayed[k] = allpass_state[k];
         for (int k = 0; k < p.If_block_size - allpass_len; k++)
@@ -618,29 +531,24 @@ static void rdsThread(const ModeParams &p,
         for (int k = 0; k < allpass_len; k++)
             allpass_state[k] = bpf_out[p.If_block_size - allpass_len + k];
 
-        // 6. Mix (baseband I/Q)
         for (int k = 0; k < p.If_block_size; k++) {
             mixed_I[k] = bpf_delayed[k] * nco_I[k];
             mixed_Q[k] = bpf_delayed[k] * nco_Q[k];
         }
 
-        // 7. Polyphase rational resample (U=rds_U, D=rds_D)
         blockConvolve_ResampleFast(res_I, mixed_I, resamp_coeff,
                                    resI_state, combResI, p.rds_D, p.rds_U);
         blockConvolve_ResampleFast(res_Q, mixed_Q, resamp_coeff,
                                    resQ_state, combResQ, p.rds_D, p.rds_U);
 
-        // 8. Matched RRC filter (decimation = 1)
         blockConvolve_DecimateFast(rrc_I, res_I, rrc_coeff, rrcI_state, combRrcI, 1);
         blockConvolve_DecimateFast(rrc_Q, res_Q, rrc_coeff, rrcQ_state, combRrcQ, 1);
 
         if (!warmup_done) {
-            // ── Warm-up: accumulate RRC output, estimate CDR offset ─────────
             wu_I.insert(wu_I.end(), rrc_I.begin(), rrc_I.end());
             wu_Q.insert(wu_Q.end(), rrc_Q.begin(), rrc_Q.end());
 
             if (block_cnt == WARMUP_BLOCKS - 1) {
-                // ── Step 0: DC remove ─────────────────────────────────────
                 real mI = 0, mQ = 0;
                 for (auto v : wu_I) mI += v;
                 mI /= (real)wu_I.size();
@@ -649,7 +557,6 @@ static void rdsThread(const ModeParams &p,
                 for (auto &v : wu_I) v -= mI;
                 for (auto &v : wu_Q) v -= mQ;
 
-                // ── Step 1: RMS normalize (same as Python) ────────────────
                 real rms2 = 0;
                 for (int k = 0; k < (int)wu_I.size(); k++)
                     rms2 += wu_I[k]*wu_I[k] + wu_Q[k]*wu_Q[k];
@@ -658,8 +565,6 @@ static void rdsThread(const ModeParams &p,
                 for (auto &v : wu_I) v /= rrc_rms;
                 for (auto &v : wu_Q) v /= rrc_rms;
 
-                // ── Step 2: Find best CDR offset via max(mean|I|, mean|Q|)
-                //           (matches Python line 307-315 exactly)
                 real best_score = -1.0f;
                 for (int trial = 0; trial < p.rds_SPS; trial++) {
                     real sI = 0, sQ = 0; int n = 0;
@@ -672,8 +577,6 @@ static void rdsThread(const ModeParams &p,
                     if (sc > best_score) { best_score = sc; cdr_offset = trial; }
                 }
 
-                // ── Step 3: Select axis by std at the found offset ────────
-                //           (matches Python lines 321-328 exactly)
                 {
                     real sumI=0, sumQ=0, sumI2=0, sumQ2=0; int n=0;
                     for (int k=cdr_offset; k<(int)wu_I.size(); k+=p.rds_SPS, n++) {
@@ -693,7 +596,6 @@ static void rdsThread(const ModeParams &p,
                               << " score=" << best_score << "\n";
                 }
 
-                // Decode warm-up symbols
                 const std::vector<real> &wuSig = (dec_axis == 'I') ? wu_I : wu_Q;
                 cdr_phase = cdr_offset;
                 std::vector<real> wu_syms = cdrSample(wuSig, p.rds_SPS, cdr_phase);
@@ -702,7 +604,6 @@ static void rdsThread(const ModeParams &p,
             }
 
         } else {
-            // ── Streaming phase: normalize, DC remove, CDR sample, decode ───
             for (auto &v : rrc_I) v /= rrc_rms;
             for (auto &v : rrc_Q) v /= rrc_rms;
 
@@ -714,7 +615,6 @@ static void rdsThread(const ModeParams &p,
             for (auto &v : rrc_I) v -= mI;
             for (auto &v : rrc_Q) v -= mQ;
 
-            // Use the axis chosen at warm-up
             const std::vector<real> &sig = (dec_axis == 'I') ? rrc_I : rrc_Q;
             std::vector<real> syms = cdrSample(sig, p.rds_SPS, cdr_phase);
             rdsDecode(syms, dec);
@@ -727,7 +627,6 @@ static void rdsThread(const ModeParams &p,
         block_cnt++;
     }
 
-    // ── Final summary ────────────────────────────────────────────────────────
     std::cerr << "\n=== RDS Final Results ===\n";
     if (dec.pi)
         std::cerr << "PI  : 0x" << std::hex << dec.pi << std::dec << "\n";
@@ -741,9 +640,6 @@ static void rdsThread(const ModeParams &p,
         std::cerr << "RT  : '" << rt << "'\n";
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// main
-// ─────────────────────────────────────────────────────────────────────────────
 int main(int argc, char* argv[])
 {
     ModeParams p;
@@ -767,7 +663,6 @@ int main(int argc, char* argv[])
               << "  taps=" << p.filter_taps << "\n";
     std::cerr << "Working with reals on " << sizeof(real) << " bytes\n";
 
-    // ── Set mode-specific parameters ─────────────────────────────────────────
     if (mode == 0) {
         p.rf_Fs=2400e3; p.If_Fs=240e3; p.audio_Fs=48e3;
         p.block_ms=40;  p.rf_decim=10; p.audio_decim=5; p.audio_up=1;
@@ -788,7 +683,6 @@ int main(int argc, char* argv[])
     p.audio_M          = p.filter_taps * p.audio_up;
     p.audio_block_size = (p.If_block_size * p.audio_up) / p.audio_decim;
 
-    // ── RDS parameters (modes 0 and 2 only; SPS differs) ────────────────────
     if (mode == 0 || mode == 2) {
         p.rds_SPS    = (mode == 0) ? 42 : 21;
         p.rds_U      = 133;
@@ -816,12 +710,10 @@ int main(int argc, char* argv[])
                   << "  out_Fs=" << p.rds_out_Fs
                   << "  rds_block=" << p.rds_block_size << "\n";
 
-    // ── Create bounded queues ────────────────────────────────────────────────
     BoundedQueue<std::vector<real>> audioQ(4);
     BoundedQueue<std::vector<real>> rdsQ(4);
     bool do_rds = (p.path == 'r');
 
-    // ── Launch threads (or run sequentially if std::thread is unavailable) ──
 #if HAS_STD_THREAD
     std::thread rf_t([&](){ rfThread(p, audioQ, do_rds ? &rdsQ : nullptr); });
     std::thread audio_t([&](){ audioThread(p, audioQ); });
@@ -833,8 +725,6 @@ int main(int argc, char* argv[])
     audio_t.join();
     if (do_rds && rds_t.joinable()) rds_t.join();
 #else
-    // Sequential fallback: RF fills unbounded queues first, then audio and
-    // RDS process in order.  Functionally correct; no parallelism.
     std::cerr << "[INFO] std::thread unavailable; running sequentially\n";
     rfThread(p, audioQ, do_rds ? &rdsQ : nullptr);
     audioThread(p, audioQ);
