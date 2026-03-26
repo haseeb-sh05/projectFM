@@ -257,21 +257,30 @@ static void rdsDecode(const std::vector<real> &syms, RDSDecState &d) {
         if (!d.synced) {
             if ((int)d.bitBuf.size() < 52) break;
 
-            // Check block A syndrome
-            uint32_t synA = rdsSyn(d.bitBuf, 0);
-            if (synA == RDS_SYN[0]) {
-                // Confirm with block B at offset 26
-                uint32_t synB = rdsSyn(d.bitBuf, 26);
-                if (synB == RDS_SYN[1]) {
-                    uint16_t info = 0;
-                    for (int k = 0; k < 16; k++) info = (info << 1) | d.bitBuf[k];
-                    rdsBlock(info, 0, d);
-                    d.synced   = true;
-                    d.blockIdx = 1;
-                    for (int k = 0; k < 26; k++) d.bitBuf.pop_front();
-                    continue;
+            // Try all 4 block offsets as sync anchor (not just block A).
+            // This lets us lock 4× faster after a signal fade recovery.
+            bool acquired = false;
+            for (int bidx = 0; bidx < 4 && !acquired; bidx++) {
+                uint32_t syn0 = rdsSyn(d.bitBuf, 0);
+                bool match0 = (syn0 == RDS_SYN[bidx]) ||
+                              (bidx == 2 && syn0 == RDS_SYN_CP);
+                if (match0) {
+                    int next_bidx = (bidx + 1) % 4;
+                    uint32_t syn1 = rdsSyn(d.bitBuf, 26);
+                    bool match1 = (syn1 == RDS_SYN[next_bidx]) ||
+                                  (next_bidx == 2 && syn1 == RDS_SYN_CP);
+                    if (match1) {
+                        uint16_t info = 0;
+                        for (int k = 0; k < 16; k++) info = (info << 1) | d.bitBuf[k];
+                        rdsBlock(info, bidx, d);
+                        d.synced   = true;
+                        d.blockIdx = next_bidx;
+                        for (int k = 0; k < 26; k++) d.bitBuf.pop_front();
+                        acquired = true;
+                    }
                 }
             }
+            if (acquired) continue;
             d.bitBuf.pop_front();
 
         } else {
@@ -306,7 +315,7 @@ static void rdsDecode(const std::vector<real> &syms, RDSDecState &d) {
                 for (int k = 0; k < 26; k++) d.bitBuf.pop_front();
             } else {
                 d.sync_bad_cnt++;
-                if (d.sync_bad_cnt >= 4) {
+                if (d.sync_bad_cnt >= 8) {
                     // Too many consecutive errors — lose sync and search from next bit
                     d.synced       = false;
                     d.sync_bad_cnt = 0;
