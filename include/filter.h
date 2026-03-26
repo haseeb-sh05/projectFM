@@ -49,5 +49,16 @@ void pllBlock(const std::vector<real> &pllIn,
               PllState &state,
               std::vector<real> &ncoOut);
 
+// PLL variant that outputs both I (cosine) and Q (sine) NCO signals in one pass
+void pllBlockIQ(const std::vector<real> &pllIn,
+                real freq, real Fs,
+                real ncoScale, real phaseAdjust, real normBandwidth,
+                PllState &state,
+                std::vector<real> &ncoOutI,
+                std::vector<real> &ncoOutQ);
+
+// Root-raised-cosine impulse response (T_symbol = 1/2375 s, beta = 0.90)
+void impulseResponseRRC(real Fs, int num_taps, std::vector<real> &h);
+
 
 #endif // DY4_FILTER_H

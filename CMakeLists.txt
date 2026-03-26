@@ -51,7 +51,9 @@ if(TARGET_TO_BUILD STREQUAL "project" OR TARGET_TO_BUILD STREQUAL "all")
   list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*[Tt]est\\.c.*$")
 
   add_executable(project ${PROJECT_SOURCES})
-  target_link_libraries(project pthread)
+  if(NOT WIN32)
+    target_link_libraries(project pthread)
+  endif()
 endif()
 
 if(TARGET_TO_BUILD STREQUAL "test_primitives" OR TARGET_TO_BUILD STREQUAL "all")

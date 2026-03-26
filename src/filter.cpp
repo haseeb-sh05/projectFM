@@ -285,6 +285,66 @@ void fmDemodNoArctan(const std::vector<real> &I, const std::vector<real> &Q, rea
 	}
 }
 
+void pllBlockIQ(const std::vector<real> &pllIn,
+                real freq, real Fs,
+                real ncoScale, real phaseAdjust, real normBandwidth,
+                PllState &state,
+                std::vector<real> &ncoOutI,
+                std::vector<real> &ncoOutQ)
+{
+	const real Cp = 2.666;
+	const real Ci = 3.555;
+	const real Kp = normBandwidth * Cp;
+	const real Ki = normBandwidth * normBandwidth * Ci;
+
+	ncoOutI.resize(pllIn.size());
+	ncoOutQ.resize(pllIn.size());
+
+	for (int k = 0; k < (int)pllIn.size(); k++) {
+		real errorI = pllIn[k] * (+state.feedbackI);
+		real errorQ = pllIn[k] * (-state.feedbackQ);
+		real errorD = std::atan2(errorQ, errorI);
+
+		state.integrator += Ki * errorD;
+		state.phaseEst   += Kp * errorD + state.integrator;
+
+		state.trigOffset += 1.0;
+		double trigArg    = 2.0 * PI * (freq / Fs) * state.trigOffset + state.phaseEst;
+		state.feedbackI   = std::cos(trigArg);
+		state.feedbackQ   = std::sin(trigArg);
+		ncoOutI[k]        = std::cos(trigArg * ncoScale + phaseAdjust);
+		ncoOutQ[k]        = std::sin(trigArg * ncoScale + phaseAdjust);
+	}
+}
+
+void impulseResponseRRC(real Fs, int num_taps, std::vector<real> &h)
+{
+	// T_symbol for RDS Manchester-encoded bit rate (2375 symbols/sec)
+	const double T_sym = 1.0 / 2375.0;
+	const double beta  = 0.90;
+
+	h.resize(num_taps);
+	for (int k = 0; k < num_taps; k++) {
+		double t = (double)(k - num_taps / 2) / (double)Fs;
+		double val;
+		if (t == 0.0) {
+			val = 1.0 + beta * (4.0 / PI - 1.0);
+		} else if (std::abs(std::abs(t) - T_sym / (4.0 * beta)) < 1e-10) {
+			val = (beta / std::sqrt(2.0)) * (
+				(1.0 + 2.0/PI) * std::sin(PI / (4.0 * beta)) +
+				(1.0 - 2.0/PI) * std::cos(PI / (4.0 * beta))
+			);
+		} else {
+			double tN  = t / T_sym;
+			double num = std::sin(PI * tN * (1.0 - beta))
+			           + 4.0 * beta * tN * std::cos(PI * tN * (1.0 + beta));
+			double den = PI * tN * (1.0 - (4.0 * beta * tN) * (4.0 * beta * tN));
+			val = num / den;
+		}
+		h[k] = (real)val;
+	}
+}
+
 void pllBlock(const std::vector<real> &pllIn,
               real freq, real Fs,
               real ncoScale, real phaseAdjust, real normBandwidth,
