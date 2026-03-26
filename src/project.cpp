@@ -141,6 +141,8 @@ struct RDSDecState {
     std::deque<uint8_t>  bitBuf;
     int      groupType = -1;
     int      gVer      = -1;
+    uint16_t pi  = 0;
+    int      pty = -1;
     char     ps[8];
     char     rt[64];
     RDSDecState() {
@@ -183,12 +185,14 @@ static std::string rdsRTStr(const char rt[64]) {
 static void rdsBlock(uint16_t info, int bidx, RDSDecState &d) {
     d.gBits[bidx] = info;
     if (bidx == 0) {
+        d.pi = info;
         std::cerr << "  PI: 0x" << std::hex << info << std::dec << "\n";
     } else if (bidx == 1) {
         d.groupType = (info >> 12) & 0xF;
         d.gVer      = (info >> 11) & 0x1;
+        d.pty       = (info >>  5) & 0x1F;
         std::cerr << "  Group " << d.groupType << (d.gVer == 0 ? "A" : "B")
-                  << ", PTY=" << ((info >> 5) & 0x1F) << "\n";
+                  << ", PTY=" << d.pty << "\n";
     } else if (bidx == 2) {
         if (d.groupType == 2 && d.gVer == 0) {
             int seg = d.gBits[1] & 0xF, base = 4 * seg;
@@ -518,7 +522,8 @@ static void rdsThread(const ModeParams &p,
     PllState pll_state;
 
     // ── CDR warm-up state ───────────────────────────────────────────────────
-        const int WARMUP_BLOCKS = 16;
+    // 50 blocks ≈ 2 s — enough data for reliable CDR statistics
+    const int WARMUP_BLOCKS = 50;
     std::vector<real> wu_I, wu_Q;
     int  cdr_offset  = p.rds_SPS / 2;
     char dec_axis    = 'I';
@@ -575,7 +580,7 @@ static void rdsThread(const ModeParams &p,
             wu_Q.insert(wu_Q.end(), rrc_Q.begin(), rrc_Q.end());
 
             if (block_cnt == WARMUP_BLOCKS - 1) {
-                // DC remove
+                // ── Step 0: DC remove ─────────────────────────────────────
                 real mI = 0, mQ = 0;
                 for (auto v : wu_I) mI += v;
                 mI /= (real)wu_I.size();
@@ -584,8 +589,18 @@ static void rdsThread(const ModeParams &p,
                 for (auto &v : wu_I) v -= mI;
                 for (auto &v : wu_Q) v -= mQ;
 
-                // Scan all SPS offsets, pick best mean(|signal|)
-                real best = -1.0f;
+                // ── Step 1: RMS normalize (same as Python) ────────────────
+                real rms2 = 0;
+                for (int k = 0; k < (int)wu_I.size(); k++)
+                    rms2 += wu_I[k]*wu_I[k] + wu_Q[k]*wu_Q[k];
+                rms2 /= (real)wu_I.size();
+                rrc_rms = (rms2 > 0) ? std::sqrt(rms2) : 1.0f;
+                for (auto &v : wu_I) v /= rrc_rms;
+                for (auto &v : wu_Q) v /= rrc_rms;
+
+                // ── Step 2: Find best CDR offset via max(mean|I|, mean|Q|)
+                //           (matches Python line 307-315 exactly)
+                real best_score = -1.0f;
                 for (int trial = 0; trial < p.rds_SPS; trial++) {
                     real sI = 0, sQ = 0; int n = 0;
                     for (int k = trial; k < (int)wu_I.size(); k += p.rds_SPS, n++) {
@@ -594,23 +609,29 @@ static void rdsThread(const ModeParams &p,
                     }
                     if (n > 0) { sI /= n; sQ /= n; }
                     real sc = std::max(sI, sQ);
-                    if (sc > best) {
-                        best       = sc;
-                        cdr_offset = trial;
-                        dec_axis   = (sI >= sQ) ? 'I' : 'Q';
-                    }
+                    if (sc > best_score) { best_score = sc; cdr_offset = trial; }
                 }
 
-                // RMS for normalization
-                real rms2 = 0;
-                for (int k = 0; k < (int)wu_I.size(); k++)
-                    rms2 += wu_I[k]*wu_I[k] + wu_Q[k]*wu_Q[k];
-                rms2 /= (real)wu_I.size();
-                rrc_rms = (rms2 > 0) ? std::sqrt(rms2) : 1.0f;
-
-                std::cerr << "[RDS warm-up] CDR=" << cdr_offset << "/" << p.rds_SPS
-                          << " axis=" << dec_axis
-                          << " score=" << best << "\n";
+                // ── Step 3: Select axis by std at the found offset ────────
+                //           (matches Python lines 321-328 exactly)
+                {
+                    real sumI=0, sumQ=0, sumI2=0, sumQ2=0; int n=0;
+                    for (int k=cdr_offset; k<(int)wu_I.size(); k+=p.rds_SPS, n++) {
+                        sumI  += wu_I[k]; sumI2 += wu_I[k]*wu_I[k];
+                        sumQ  += wu_Q[k]; sumQ2 += wu_Q[k]*wu_Q[k];
+                    }
+                    real stdI = 0, stdQ = 0;
+                    if (n > 1) {
+                        real meanI = sumI/n, meanQ = sumQ/n;
+                        stdI = std::sqrt(std::max(0.0f, sumI2/n - meanI*meanI));
+                        stdQ = std::sqrt(std::max(0.0f, sumQ2/n - meanQ*meanQ));
+                    }
+                    dec_axis = (stdI >= stdQ) ? 'I' : 'Q';
+                    std::cerr << "[RDS warm-up] CDR=" << cdr_offset << "/" << p.rds_SPS
+                              << " axis=" << dec_axis
+                              << " stdI=" << stdI << " stdQ=" << stdQ
+                              << " score=" << best_score << "\n";
+                }
 
                 // Decode warm-up symbols
                 const std::vector<real> &wuSig = (dec_axis == 'I') ? wu_I : wu_Q;
@@ -621,7 +642,7 @@ static void rdsThread(const ModeParams &p,
             }
 
         } else {
-            // ── Streaming phase: normalize, DC remove, sample, decode ───────
+            // ── Streaming phase: normalize, DC remove, CDR sample, decode ───
             for (auto &v : rrc_I) v /= rrc_rms;
             for (auto &v : rrc_Q) v /= rrc_rms;
 
@@ -633,11 +654,12 @@ static void rdsThread(const ModeParams &p,
             for (auto &v : rrc_I) v -= mI;
             for (auto &v : rrc_Q) v -= mQ;
 
+            // Use the axis chosen at warm-up
             const std::vector<real> &sig = (dec_axis == 'I') ? rrc_I : rrc_Q;
             std::vector<real> syms = cdrSample(sig, p.rds_SPS, cdr_phase);
             rdsDecode(syms, dec);
 
-            if (block_cnt % 50 == 0)
+            if (block_cnt % 100 == 0)
                 std::cerr << "[RDS block " << block_cnt << "] synced="
                           << dec.synced << " syms=" << syms.size() << "\n";
         }
@@ -647,10 +669,16 @@ static void rdsThread(const ModeParams &p,
 
     // ── Final summary ────────────────────────────────────────────────────────
     std::cerr << "\n=== RDS Final Results ===\n";
-    std::cerr << "PS : '";
+    if (dec.pi)
+        std::cerr << "PI  : 0x" << std::hex << dec.pi << std::dec << "\n";
+    if (dec.pty >= 0)
+        std::cerr << "PTY : " << dec.pty << "\n";
+    std::cerr << "PS  : '";
     for (int i = 0; i < 8; i++) std::cerr << dec.ps[i];
     std::cerr << "'\n";
-    std::cerr << "RT : '" << rdsRTStr(dec.rt) << "'\n";
+    std::string rt = rdsRTStr(dec.rt);
+    if (!rt.empty())
+        std::cerr << "RT  : '" << rt << "'\n";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
