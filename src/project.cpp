@@ -182,6 +182,46 @@ static std::string rdsRTStr(const char rt[64]) {
     return s.substr(0, e);
 }
 
+// ─── RBDS (North America) Program Type name lookup (Table F.1) ───────────────
+static const char* rdsPtyName(int pty) {
+    static const char* names[32] = {
+        "None",           // 0
+        "News",           // 1
+        "Information",    // 2
+        "Sports",         // 3
+        "Talk",           // 4
+        "Rock",           // 5
+        "Classic Rock",   // 6
+        "Adult Hits",     // 7
+        "Soft Rock",      // 8
+        "Top 40",         // 9
+        "Country",        // 10
+        "Oldies",         // 11
+        "Soft",           // 12
+        "Nostalgia",      // 13
+        "Jazz",           // 14
+        "Classical",      // 15
+        "Rhythm and Blues", // 16
+        "Soft R&B",       // 17
+        "Foreign Language", // 18
+        "Religious Music",  // 19
+        "Religious Talk",   // 20
+        "Personality",    // 21
+        "Public",         // 22
+        "College",        // 23
+        "Unassigned",     // 24
+        "Unassigned",     // 25
+        "Unassigned",     // 26
+        "Unassigned",     // 27
+        "Unassigned",     // 28
+        "Weather",        // 29
+        "Emergency Test", // 30
+        "Emergency",      // 31
+    };
+    if (pty < 0 || pty > 31) return "Unknown";
+    return names[pty];
+}
+
 // ─── process one decoded RDS block ───────────────────────────────────────────
 static void rdsBlock(uint16_t info, int bidx, RDSDecState &d) {
     d.gBits[bidx] = info;
@@ -193,7 +233,7 @@ static void rdsBlock(uint16_t info, int bidx, RDSDecState &d) {
         d.gVer      = (info >> 11) & 0x1;
         d.pty       = (info >>  5) & 0x1F;
         std::cerr << "  Group " << d.groupType << (d.gVer == 0 ? "A" : "B")
-                  << ", PTY=" << d.pty << "\n";
+                  << ", PTY=" << d.pty << " (" << rdsPtyName(d.pty) << ")\n";
     } else if (bidx == 2) {
         if (d.groupType == 2 && d.gVer == 0) {
             int seg = d.gBits[1] & 0xF, base = 4 * seg;
@@ -692,7 +732,7 @@ static void rdsThread(const ModeParams &p,
     if (dec.pi)
         std::cerr << "PI  : 0x" << std::hex << dec.pi << std::dec << "\n";
     if (dec.pty >= 0)
-        std::cerr << "PTY : " << dec.pty << "\n";
+        std::cerr << "PTY : " << dec.pty << " (" << rdsPtyName(dec.pty) << ")\n";
     std::cerr << "PS  : '";
     for (int i = 0; i < 8; i++) std::cerr << dec.ps[i];
     std::cerr << "'\n";
