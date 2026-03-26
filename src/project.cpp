@@ -133,8 +133,9 @@ static const uint32_t RDS_SYN_CP = 0b1111001100u;  // offset C'
 // RDS decode state
 // ─────────────────────────────────────────────────────────────────────────────
 struct RDSDecState {
-    bool     synced   = false;
-    int      blockIdx = 0;
+    bool     synced       = false;
+    int      blockIdx     = 0;
+    int      sync_bad_cnt = 0;  // consecutive bad blocks while synced
     int      gBits[4] = {0, 0, 0, 0};
     int      diffPrev = 0;
     std::vector<real>    manchBuf;
@@ -297,14 +298,24 @@ static void rdsDecode(const std::vector<real> &syms, RDSDecState &d) {
             }
 
             if (ok) {
+                d.sync_bad_cnt = 0;
                 uint16_t info = 0;
                 for (int k = 0; k < 16; k++) info = (info << 1) | b26[k];
                 rdsBlock(info, d.blockIdx, d);
                 d.blockIdx = (d.blockIdx + 1) % 4;
                 for (int k = 0; k < 26; k++) d.bitBuf.pop_front();
             } else {
-                d.synced = false;
-                d.bitBuf.pop_front();
+                d.sync_bad_cnt++;
+                if (d.sync_bad_cnt >= 4) {
+                    // Too many consecutive errors — lose sync and search from next bit
+                    d.synced       = false;
+                    d.sync_bad_cnt = 0;
+                    d.bitBuf.pop_front();
+                } else {
+                    // Treat as erasure: stay synced, advance one block boundary
+                    for (int k = 0; k < 26; k++) d.bitBuf.pop_front();
+                    d.blockIdx = (d.blockIdx + 1) % 4;
+                }
             }
         }
     }
