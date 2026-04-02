@@ -1,0 +1,25 @@
+Then your commands are just:
+
+```bash
+# Mode 0 - all paths (1500 MHz, 101 taps)
+cat ../data/*.raw | ./build/project 0 m 101 2>timing_mode0_mono.txt >/dev/null
+cat ../data/*.raw | ./build/project 0 s 101 2>timing_mode0_stereo.txt >/dev/null
+cat ../data/*.raw | ./build/project 0 r 101 2>timing_mode0_rds.txt >/dev/null
+
+# Mode 1
+cat ../data/*.raw | ./build/project 1 m 101 2>timing_mode1_mono.txt >/dev/null
+cat ../data/*.raw | ./build/project 1 s 101 2>timing_mode1_stereo.txt >/dev/null
+
+# Mode 2
+cat ../data/*.raw | ./build/project 2 m 101 2>timing_mode2_mono.txt >/dev/null
+cat ../data/*.raw | ./build/project 2 s 101 2>timing_mode2_stereo.txt >/dev/null
+cat ../data/*.raw | ./build/project 2 r 101 2>timing_mode2_rds.txt >/dev/null
+
+# Mode 3
+cat ../data/*.raw | ./build/project 3 m 101 2>timing_mode3_mono.txt >/dev/null
+cat ../data/*.raw | ./build/project 3 s 101 2>timing_mode3_stereo.txt >/dev/null
+```
+
+Replace `*.raw` with the actual filename if you know it (e.g. `cap_mode0.raw`). What's the exact filename?
+
+Also — does your project use a `build/` subfolder for the binary, or is it just `./project`?
